@@ -1,0 +1,227 @@
+package edu.zsc.ai.plugin.dm.support;
+
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Locale;
+
+import org.apache.commons.lang3.StringUtils;
+
+import edu.zsc.ai.plugin.constant.DatabaseObjectTypeEnum;
+import edu.zsc.ai.plugin.model.command.sql.AbstractSqlExecutor;
+import edu.zsc.ai.plugin.model.command.sql.SqlCommandRequest;
+import edu.zsc.ai.plugin.model.command.sql.SqlCommandResult;
+import edu.zsc.ai.plugin.dm.constant.DmSqlTemplate;
+import edu.zsc.ai.plugin.dm.value.DmValueProcessor;
+import edu.zsc.ai.plugin.dm.util.DmIdentifierBuilder;
+import edu.zsc.ai.plugin.dm.util.DmIdentifierEscaper;
+import edu.zsc.ai.plugin.value.JdbcValueContext;
+import edu.zsc.ai.plugin.value.ValueProcessor;
+
+/**
+ * Shared helpers for DM metadata managers: object DDL via DBMS_METADATA,
+ * DROP statements, and paginated table/view data queries.
+ */
+public final class DmMetadataSupport {
+
+    private final AbstractSqlExecutor sqlExecutor = new DmSqlExecutor();
+
+    public SqlCommandResult execute(Connection connection, String schema, String sql) {
+        return sqlExecutor.executeCommand(
+                SqlCommandRequest.ofWithoutTransaction(connection, sql, sql, null, schema));
+    }
+
+    /**
+     * Resolve the effective schema for dictionary queries: DM stores unquoted
+     * identifiers uppercase, so the result is always uppercased. Blank schema
+     * falls back to the connection's current schema (then current user).
+     */
+    public String resolveSchema(Connection connection, String schema) {
+        if (StringUtils.isNotBlank(schema)) {
+            return schema.trim().toUpperCase(Locale.ROOT);
+        }
+        String current = null;
+        try {
+            current = connection.getSchema();
+        } catch (Throwable ignored) {
+            // some drivers do not implement Connection#getSchema
+        }
+        if (StringUtils.isBlank(current)) {
+            try (PreparedStatement statement = connection.prepareStatement(DmSqlTemplate.SQL_CURRENT_USER);
+                 ResultSet resultSet = statement.executeQuery()) {
+                if (resultSet.next()) {
+                    current = resultSet.getString(1);
+                }
+            } catch (SQLException e) {
+                throw new RuntimeException("Failed to resolve current DM schema: " + e.getMessage(), e);
+            }
+        }
+        if (StringUtils.isBlank(current)) {
+            throw new IllegalArgumentException("Schema must not be blank for DM metadata operations");
+        }
+        return current.trim().toUpperCase(Locale.ROOT);
+    }
+
+    /**
+     * Get object DDL via DBMS_METADATA.GET_DDL. Names are uppercased because DM
+     * stores unquoted identifiers in uppercase.
+     */
+    public String getObjectDdl(Connection connection, String schema, String objectName,
+                               String ddlSql, String objectType) {
+        requireConnectionAndName(connection, objectName);
+
+        String owner = resolveSchema(connection, schema);
+        String name = objectName.trim().toUpperCase(Locale.ROOT);
+
+        try (PreparedStatement statement = connection.prepareStatement(ddlSql)) {
+            statement.setString(1, name);
+            statement.setString(2, owner);
+            try (ResultSet resultSet = statement.executeQuery()) {
+                if (resultSet.next()) {
+                    String ddl = resultSet.getString(1);
+                    if (StringUtils.isNotBlank(ddl)) {
+                        return ddl;
+                    }
+                }
+            }
+            throw new RuntimeException(String.format("Failed to get %s DDL: No result returned", objectType));
+        } catch (SQLException e) {
+            throw new RuntimeException(String.format("Failed to get %s DDL: %s", objectType, e.getMessage()), e);
+        }
+    }
+
+    public String getTableComment(Connection connection, String owner, String tableName) {
+        try (PreparedStatement statement = connection.prepareStatement(DmSqlTemplate.SQL_TABLE_COMMENT)) {
+            statement.setString(1, owner);
+            statement.setString(2, tableName);
+            try (ResultSet resultSet = statement.executeQuery()) {
+                if (resultSet.next()) {
+                    return resultSet.getString(1);
+                }
+            }
+        } catch (SQLException e) {
+            throw new RuntimeException("Failed to get table comment: " + e.getMessage(), e);
+        }
+        return null;
+    }
+
+    /**
+     * Query column comments from ALL_COL_COMMENTS.
+     *
+     * @return rows of [COLUMN_NAME, COMMENTS], comments may be null
+     */
+    public List<String[]> getColumnComments(Connection connection, String owner, String tableName) {
+        List<String[]> comments = new ArrayList<>();
+        try (PreparedStatement statement = connection.prepareStatement(DmSqlTemplate.SQL_COLUMN_COMMENTS)) {
+            statement.setString(1, owner);
+            statement.setString(2, tableName);
+            try (ResultSet resultSet = statement.executeQuery()) {
+                while (resultSet.next()) {
+                    comments.add(new String[]{resultSet.getString(1), resultSet.getString(2)});
+                }
+            }
+        } catch (SQLException e) {
+            throw new RuntimeException("Failed to get column comments: " + e.getMessage(), e);
+        }
+        return comments;
+    }
+
+    public void dropObject(Connection connection, String schema, String objectName,
+                           String sqlTemplate, DatabaseObjectTypeEnum objectType) {
+        requireConnectionAndName(connection, objectName);
+
+        String fullName = DmIdentifierBuilder.buildFullIdentifier(schema, objectName);
+        String sql = String.format(sqlTemplate, fullName);
+
+        SqlCommandResult result = execute(connection, schema, sql);
+        if (!result.isSuccess()) {
+            throw new RuntimeException(String.format(
+                    "Failed to delete %s: %s", objectType.getValue(), result.getErrorMessage()));
+        }
+    }
+
+    public SqlCommandResult getTableLikeData(Connection connection, String schema,
+                                             String objectName, int offset, int pageSize) {
+        requireConnectionAndName(connection, objectName);
+
+        String fullObjectName = DmIdentifierBuilder.buildFullIdentifier(schema, objectName);
+        String sql = String.format(DmSqlTemplate.SQL_SELECT_TABLE_DATA, fullObjectName, offset, pageSize);
+
+        SqlCommandResult result = execute(connection, schema, sql);
+        if (!result.isSuccess()) {
+            throw new RuntimeException("Failed to get table data: " + result.getErrorMessage());
+        }
+        return result;
+    }
+
+    public SqlCommandResult getTableLikeData(Connection connection, String schema, String objectName,
+                                             int offset, int pageSize, String whereClause,
+                                             String orderByColumn, String orderByDirection) {
+        requireConnectionAndName(connection, objectName);
+
+        String fullObjectName = DmIdentifierBuilder.buildFullIdentifier(schema, objectName);
+        StringBuilder sql = new StringBuilder("SELECT * FROM ").append(fullObjectName);
+
+        if (StringUtils.isNotBlank(whereClause)) {
+            sql.append(" WHERE ").append(whereClause);
+        }
+        if (StringUtils.isNotBlank(orderByColumn)) {
+            String direction = "desc".equalsIgnoreCase(orderByDirection) ? "DESC" : "ASC";
+            String quotedColumn = DmIdentifierEscaper.getInstance().quoteIdentifier(orderByColumn.trim());
+            sql.append(" ORDER BY ").append(quotedColumn).append(" ").append(direction);
+        }
+        sql.append(" LIMIT ").append(offset).append(", ").append(pageSize);
+
+        SqlCommandResult result = execute(connection, schema, sql.toString());
+        if (!result.isSuccess()) {
+            throw new RuntimeException("Failed to get table data: " + result.getErrorMessage());
+        }
+        return result;
+    }
+
+    public long getTableLikeDataCount(Connection connection, String schema, String objectName) {
+        return getTableLikeDataCount(connection, schema, objectName, null);
+    }
+
+    public long getTableLikeDataCount(Connection connection, String schema, String objectName, String whereClause) {
+        requireConnectionAndName(connection, objectName);
+
+        String fullObjectName = DmIdentifierBuilder.buildFullIdentifier(schema, objectName);
+        String sql = StringUtils.isNotBlank(whereClause)
+                ? "SELECT COUNT(*) AS total FROM " + fullObjectName + " WHERE " + whereClause
+                : String.format(DmSqlTemplate.SQL_COUNT_TABLE_DATA, fullObjectName);
+
+        try (PreparedStatement statement = connection.prepareStatement(sql);
+             ResultSet resultSet = statement.executeQuery()) {
+            if (resultSet.next()) {
+                return resultSet.getLong("total");
+            }
+            return 0;
+        } catch (SQLException e) {
+            throw new RuntimeException("Failed to get table data count: " + e.getMessage(), e);
+        }
+    }
+
+    private void requireConnectionAndName(Connection connection, String objectName) {
+        if (connection == null || StringUtils.isBlank(objectName)) {
+            throw new IllegalArgumentException("Connection and object name must not be null or empty");
+        }
+    }
+
+    /**
+     * Minimal DM SQL executor using the DM-specific value processor,
+     * consistent with the main {@code DmSqlExecutor} in the executor package.
+     */
+    private static final class DmSqlExecutor extends AbstractSqlExecutor {
+
+        private static final ValueProcessor VALUE_PROCESSOR = DmValueProcessor.INSTANCE;
+
+        @Override
+        protected Object getJdbcValue(JdbcValueContext context) throws SQLException {
+            return VALUE_PROCESSOR.getJdbcValue(context);
+        }
+    }
+}
