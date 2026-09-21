@@ -27,7 +27,7 @@ class DriverStorageManagerTest {
             DbType.MYSQL
         );
         
-        assertEquals(tempDir.resolve("MySQL"), storageDir);
+        assertEquals(tempDir.resolve("mysql"), storageDir);
     }
     
     @Test
@@ -44,7 +44,7 @@ class DriverStorageManagerTest {
             coordinates
         );
         
-        assertEquals(tempDir.resolve("MySQL/mysql-connector-j-8.0.33.jar"), driverPath);
+        assertEquals(tempDir.resolve("mysql/mysql-connector-j-8.0.33.jar"), driverPath);
     }
     
     @Test

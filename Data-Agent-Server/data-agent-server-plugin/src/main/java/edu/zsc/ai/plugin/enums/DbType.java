@@ -8,7 +8,12 @@ public enum DbType {
     /**
      * MySQL
      */
-    MYSQL("mysql", "MySQL", PluginType.SQL);
+    MYSQL("mysql", "MySQL", PluginType.SQL),
+
+    /**
+     * DM (达梦)
+     */
+    DM("dm", "DM", PluginType.SQL);
     
     /**
      * Database type identifier (lowercase)

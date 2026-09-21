@@ -32,7 +32,7 @@ public final class DriverStorageManager {
             ? baseStorageDir 
             : DriverConstants.DEFAULT_STORAGE_DIR;
         
-        String dbTypeDir = dbType.getDisplayName();
+        String dbTypeDir = dbType.getCode();
         return Paths.get(storageDir, dbTypeDir);
     }
     

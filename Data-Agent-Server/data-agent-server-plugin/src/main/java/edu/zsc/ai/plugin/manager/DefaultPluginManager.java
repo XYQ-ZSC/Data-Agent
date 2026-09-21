@@ -272,4 +272,12 @@ public class DefaultPluginManager implements PluginManager {
         }
         return !(plugin instanceof SqlPlugin sqlPlugin) || sqlPlugin.supportSchema();
     }
+
+    public boolean supportsDatabaseByPluginId(@NotBlank String pluginId) {
+        Plugin plugin = pluginMap.get(pluginId);
+        if (plugin == null) {
+            throw new IllegalArgumentException("No plugin found with ID: " + pluginId);
+        }
+        return !(plugin instanceof SqlPlugin sqlPlugin) || sqlPlugin.supportDatabase();
+    }
 }

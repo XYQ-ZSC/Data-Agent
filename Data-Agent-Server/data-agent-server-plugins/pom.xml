@@ -18,6 +18,7 @@
 
     <modules>
         <module>mysql-plugin</module>
+        <module>dm-plugin</module>
     </modules>
 
     <dependencies>
@@ -26,6 +27,11 @@
         <dependency>
             <groupId>edu.zsc.ai</groupId>
             <artifactId>mysql-plugin</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>edu.zsc.ai</groupId>
+            <artifactId>dm-plugin</artifactId>
             <version>${project.version}</version>
         </dependency>
     </dependencies>
