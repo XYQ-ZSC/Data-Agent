@@ -1,0 +1,71 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<configuration>
+
+    <property name="MEMORY_LOG_DIR" value="${user.home}/.data-agent/logs/agent/memory"/>
+    <property name="RUNTIME_LOG_DIR" value="${user.home}/.data-agent/logs/agent/runtime"/>
+
+    <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder>
+            <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n</pattern>
+        </encoder>
+    </appender>
+
+    <appender name="MEMORY_AUTO_WRITE_FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <file>${MEMORY_LOG_DIR}/memory-auto-write.log</file>
+        <rollingPolicy class="ch.qos.logback.core.rolling.TimeBasedRollingPolicy">
+            <fileNamePattern>${MEMORY_LOG_DIR}/memory-auto-write.%d{yyyy-MM-dd}.log</fileNamePattern>
+            <maxHistory>14</maxHistory>
+            <totalSizeCap>100MB</totalSizeCap>
+        </rollingPolicy>
+        <encoder>
+            <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{20} - %msg%n</pattern>
+        </encoder>
+    </appender>
+
+    <appender name="AGENT_RUNTIME_FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <file>${RUNTIME_LOG_DIR}/agent-runtime.log</file>
+        <rollingPolicy class="ch.qos.logback.core.rolling.TimeBasedRollingPolicy">
+            <fileNamePattern>${RUNTIME_LOG_DIR}/agent-runtime.%d{yyyy-MM-dd}.log</fileNamePattern>
+            <maxHistory>14</maxHistory>
+            <totalSizeCap>200MB</totalSizeCap>
+        </rollingPolicy>
+        <encoder>
+            <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{24} - %msg%n</pattern>
+        </encoder>
+    </appender>
+
+    <logger name="agent.runtime" level="DEBUG" additivity="false">
+        <appender-ref ref="CONSOLE"/>
+        <appender-ref ref="AGENT_RUNTIME_FILE"/>
+    </logger>
+
+    <logger name="edu.zsc.ai.domain.event.ConversationMemoryAutoWriteEventListener"
+            level="DEBUG" additivity="false">
+        <appender-ref ref="CONSOLE"/>
+        <appender-ref ref="MEMORY_AUTO_WRITE_FILE"/>
+        <appender-ref ref="AGENT_RUNTIME_FILE"/>
+    </logger>
+    <logger name="edu.zsc.ai.domain.service.ai.autowrite"
+            level="DEBUG" additivity="false">
+        <appender-ref ref="CONSOLE"/>
+        <appender-ref ref="MEMORY_AUTO_WRITE_FILE"/>
+        <appender-ref ref="AGENT_RUNTIME_FILE"/>
+    </logger>
+    <logger name="edu.zsc.ai.domain.service.ai.impl.MemoryServiceImpl"
+            level="DEBUG" additivity="false">
+        <appender-ref ref="CONSOLE"/>
+        <appender-ref ref="MEMORY_AUTO_WRITE_FILE"/>
+        <appender-ref ref="AGENT_RUNTIME_FILE"/>
+    </logger>
+    <logger name="edu.zsc.ai.agent.tool.memory"
+            level="DEBUG" additivity="false">
+        <appender-ref ref="CONSOLE"/>
+        <appender-ref ref="MEMORY_AUTO_WRITE_FILE"/>
+        <appender-ref ref="AGENT_RUNTIME_FILE"/>
+    </logger>
+
+    <root level="INFO">
+        <appender-ref ref="CONSOLE"/>
+    </root>
+
+</configuration>

@@ -1,0 +1,93 @@
+import { useTranslation } from 'react-i18next';
+import { Tree as ArboristTree, NodeApi } from 'react-arborist';
+import { ExplorerTreeConfig, ExplorerNodeType } from '../../constants/explorer';
+import { I18N_KEYS } from '../../constants/i18nKeys';
+import { ExplorerTreeNode } from './ExplorerTreeNode';
+import type { ExplorerNode } from '../../types/explorer';
+import type { ExplorerNodeHydrationState } from '../../hooks/useConnectionTree';
+
+interface ExplorerTreeProps {
+  data: ExplorerNode[];
+  searchTerm: string;
+  isLoading: boolean;
+  loadingNodeIds: ReadonlySet<string>;
+  onHydrateFromCache: (node: NodeApi<ExplorerNode>) => ExplorerNodeHydrationState;
+  onLoadData: (node: NodeApi<ExplorerNode>) => void;
+  onDisconnect: (node: NodeApi<ExplorerNode>) => void;
+  onEditConnection: (connId: number) => void;
+  onDeleteConnection: (connId: number) => void;
+  onViewDdl: (node: ExplorerNode) => void;
+  onViewData: (node: ExplorerNode, highlightColumn?: string) => void;
+  onTableOrViewDoubleClick: (node: ExplorerNode) => void;
+  onRename: (node: ExplorerNode) => void;
+  onDelete: (node: ExplorerNode, type: ExplorerNodeType) => void;
+  onOpenQueryConsole: (node: ExplorerNode) => void;
+  onCreateTable: (node: ExplorerNode) => void;
+}
+
+export function ExplorerTree({
+  data,
+  searchTerm,
+  isLoading,
+  loadingNodeIds,
+  onHydrateFromCache,
+  onLoadData,
+  onDisconnect,
+  onEditConnection,
+  onDeleteConnection,
+  onViewDdl,
+  onViewData,
+  onTableOrViewDoubleClick,
+  onRename,
+  onDelete,
+  onOpenQueryConsole,
+  onCreateTable,
+}: ExplorerTreeProps) {
+  const { t } = useTranslation();
+
+  const renderNode = ({ node, style, dragHandle }: { node: NodeApi<ExplorerNode>; style: React.CSSProperties; dragHandle?: unknown }) => {
+    return (
+      <ExplorerTreeNode
+        node={node}
+        style={style}
+        dragHandle={dragHandle as React.RefObject<HTMLDivElement>}
+        isLoading={loadingNodeIds.has(node.id)}
+        onHydrateFromCache={onHydrateFromCache}
+        onLoadData={onLoadData}
+        onDisconnect={onDisconnect}
+        onEditConnection={onEditConnection}
+        onDeleteConnection={onDeleteConnection}
+        onViewDdl={onViewDdl}
+        onViewData={onViewData}
+        onTableOrViewDoubleClick={onTableOrViewDoubleClick}
+        onRename={onRename}
+        onDelete={onDelete}
+        onOpenQueryConsole={onOpenQueryConsole}
+        onCreateTable={onCreateTable}
+      />
+    );
+  };
+
+  return (
+    <div className="flex-1 min-h-0 overflow-hidden">
+      {data.length === 0 && !isLoading ? (
+        <div className="p-4 text-center text-xs theme-text-secondary opacity-60">{t(I18N_KEYS.COMMON.NO_CONNECTIONS)}</div>
+      ) : (
+        <div className="h-full overflow-y-auto pr-1">
+          <ArboristTree
+            data={data}
+            openByDefault={false}
+            width="100%"
+            height={ExplorerTreeConfig.HEIGHT}
+            indent={ExplorerTreeConfig.INDENT}
+            rowHeight={ExplorerTreeConfig.ROW_HEIGHT}
+            searchTerm={searchTerm}
+            searchMatch={(node, term) => node.data.name.toLowerCase().includes(term.toLowerCase())}
+          >
+            {renderNode}
+          </ArboristTree>
+        </div>
+      )}
+    </div>
+  );
+}

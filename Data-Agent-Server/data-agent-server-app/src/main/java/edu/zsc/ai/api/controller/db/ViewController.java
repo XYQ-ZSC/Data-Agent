@@ -1,0 +1,86 @@
+package edu.zsc.ai.api.controller.db;
+
+import edu.zsc.ai.domain.model.context.DbContext;
+import edu.zsc.ai.domain.model.dto.request.db.DeleteViewRequest;
+import edu.zsc.ai.domain.model.dto.response.base.ApiResponse;
+import edu.zsc.ai.domain.model.dto.response.db.TableDataResponse;
+import edu.zsc.ai.domain.service.db.ViewService;
+import jakarta.validation.Valid;
+import jakarta.validation.constraints.NotNull;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.validation.annotation.Validated;
+import org.springframework.web.bind.annotation.DeleteMapping;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RestController;
+
+import java.util.List;
+
+@Slf4j
+@Validated
+@RestController
+@RequestMapping("/api/views")
+@RequiredArgsConstructor
+public class ViewController {
+
+    private final ViewService viewService;
+
+    @GetMapping
+    public ApiResponse<List<String>> listViews(
+            @RequestParam @NotNull(message = "connectionId is required") Long connectionId,
+            @RequestParam(required = false) String catalog,
+            @RequestParam(required = false) String schema) {
+        log.info("Listing views: connectionId={}, catalog={}, schema={}", connectionId, catalog, schema);
+        DbContext db = new DbContext(connectionId, catalog, schema);
+        List<String> views = viewService.getViews(db);
+        return ApiResponse.success(views);
+    }
+
+    @GetMapping("/ddl")
+    public ApiResponse<String> getViewDdl(
+            @RequestParam @NotNull(message = "connectionId is required") Long connectionId,
+            @RequestParam @NotNull(message = "viewName is required") String viewName,
+            @RequestParam(required = false) String catalog,
+            @RequestParam(required = false) String schema) {
+        log.info("Getting view DDL: connectionId={}, viewName={}, catalog={}, schema={}",
+                connectionId, viewName, catalog, schema);
+        DbContext db = new DbContext(connectionId, catalog, schema);
+        String ddl = viewService.getViewDdl(db, viewName);
+        return ApiResponse.success(ddl);
+    }
+
+    @DeleteMapping
+    public ApiResponse<Void> deleteView(@Valid @RequestBody DeleteViewRequest request) {
+        log.info("Deleting view: connectionId={}, viewName={}, catalog={}, schema={}",
+                request.getConnectionId(), request.getViewName(), request.getCatalog(), request.getSchema());
+        DbContext db = new DbContext(request.getConnectionId(), request.getCatalog(), request.getSchema());
+        viewService.deleteView(db, request.getViewName());
+        return ApiResponse.success(null);
+    }
+
+    @GetMapping("/data")
+    public ApiResponse<TableDataResponse> getViewData(
+            @RequestParam @NotNull(message = "connectionId is required") Long connectionId,
+            @RequestParam @NotNull(message = "viewName is required") String viewName,
+            @RequestParam(required = false) String catalog,
+            @RequestParam(required = false) String schema,
+            @RequestParam(defaultValue = "1") Integer currentPage,
+            @RequestParam(defaultValue = "100") Integer pageSize,
+            @RequestParam(required = false) String whereClause,
+            @RequestParam(required = false) String orderByColumn,
+            @RequestParam(required = false) String orderByDirection) {
+        log.info("Getting view data: connectionId={}, viewName={}, catalog={}, schema={}, currentPage={}, pageSize={}",
+                connectionId, viewName, catalog, schema, currentPage, pageSize);
+        DbContext db = new DbContext(connectionId, catalog, schema);
+        boolean hasFilter = (whereClause != null && !whereClause.isBlank())
+                || (orderByColumn != null && !orderByColumn.isBlank());
+        TableDataResponse response = hasFilter
+                ? viewService.getViewData(db, viewName, currentPage, pageSize,
+                        whereClause, orderByColumn, orderByDirection)
+                : viewService.getViewData(db, viewName, currentPage, pageSize);
+        return ApiResponse.success(response);
+    }
+}

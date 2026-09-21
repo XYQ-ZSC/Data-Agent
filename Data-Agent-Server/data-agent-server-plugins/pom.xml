@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>edu.zsc.ai</groupId>
+        <artifactId>data-agent-server</artifactId>
+        <version>0.0.1-SNAPSHOT</version>
+        <relativePath>../pom.xml</relativePath>
+    </parent>
+
+    <artifactId>data-agent-server-plugins</artifactId>
+    <packaging>pom</packaging>
+    <name>data-agent-server-plugins</name>
+    <description>Database plugin implementations aggregation module</description>
+
+    <modules>
+        <module>mysql-plugin</module>
+    </modules>
+
+    <dependencies>
+        <!-- Aggregate all plugin implementations -->
+        <!-- Declare all plugin modules as dependencies so they are transitively available -->
+        <dependency>
+            <groupId>edu.zsc.ai</groupId>
+            <artifactId>mysql-plugin</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+    </dependencies>
+
+</project>

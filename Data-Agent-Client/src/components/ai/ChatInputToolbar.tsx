@@ -1,0 +1,125 @@
+import { Send, Square, ChevronDown, Brain } from 'lucide-react';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '../ui/DropdownMenu';
+import { AGENT_COLORS, type AgentType } from './agentTypes';
+import type { ModelOption } from '../../types/ai';
+
+function modelDisplayLabel(option: ModelOption): string {
+  return option.modelName;
+}
+
+interface AgentOption {
+  type: AgentType;
+  icon: React.ElementType;
+  label: string;
+}
+
+interface ChatInputToolbarProps {
+  agent: AgentType;
+  setAgent: (agent: AgentType) => void;
+  model: string;
+  setModel: (model: string) => void;
+  /** Available models from API (or fallback). */
+  modelOptions: ModelOption[];
+  onSend: () => void;
+  /** Abort current stream when user clicks stop. */
+  onStop?: () => void;
+  /** When true, show stop button instead of send. */
+  isLoading?: boolean;
+  agents: AgentOption[];
+  CurrentAgentIcon: React.ElementType;
+}
+
+export function ChatInputToolbar({
+  agent,
+  setAgent,
+  model,
+  setModel,
+  modelOptions,
+  onSend,
+  onStop,
+  isLoading = false,
+  agents,
+  CurrentAgentIcon,
+}: ChatInputToolbarProps) {
+  const currentOption = modelOptions.find((m) => m.modelName === model);
+
+  return (
+    <div className="flex items-center justify-between">
+      <div className="flex items-center gap-2">
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <button
+              type="button"
+              className={`h-7 px-2 rounded-lg border text-xs transition-colors flex items-center gap-1.5 ${AGENT_COLORS[agent].bg} ${AGENT_COLORS[agent].border} theme-text-secondary hover:theme-text-primary`}
+            >
+              <CurrentAgentIcon className={`w-3 h-3 ${AGENT_COLORS[agent].icon}`} />
+              <span className="font-medium">{agents.find((a) => a.type === agent)?.label}</span>
+              <ChevronDown className="w-2.5 h-2.5 opacity-50" />
+            </button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="start" className="w-32">
+            {agents.map((a) => (
+              <DropdownMenuItem
+                key={a.type}
+                onClick={() => setAgent(a.type)}
+                className="text-[10px] flex items-center space-x-2"
+              >
+                <a.icon className={`w-3 h-3 ${AGENT_COLORS[a.type].icon}`} />
+                <span>{a.label}</span>
+              </DropdownMenuItem>
+            ))}
+          </DropdownMenuContent>
+        </DropdownMenu>
+
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <button
+              type="button"
+              className="h-7 px-2 rounded-lg border border-[color:var(--border-color)] bg-[color:var(--bg-panel)] text-xs theme-text-secondary hover:theme-text-primary transition-colors flex items-center gap-1.5"
+            >
+              <span>{currentOption ? modelDisplayLabel(currentOption) : model}</span>
+              {currentOption?.supportThinking && (
+                <Brain className="w-3 h-3 opacity-70 shrink-0" aria-hidden />
+              )}
+              <ChevronDown className="w-2.5 h-2.5 opacity-50 shrink-0" />
+            </button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="start" className="w-40">
+            {modelOptions.map((m) => (
+              <DropdownMenuItem
+                key={m.modelName}
+                onClick={() => setModel(m.modelName)}
+                className="text-[10px] flex items-center gap-2"
+              >
+                <span>{modelDisplayLabel(m)}</span>
+                {m.supportThinking && (
+                  <Brain className="w-3.5 h-3.5 theme-text-secondary shrink-0" aria-hidden />
+                )}
+              </DropdownMenuItem>
+            ))}
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
+
+      <div className="flex items-center space-x-2">
+        <button
+          type="button"
+          onClick={isLoading ? (onStop ?? (() => {})) : onSend}
+          className={`w-8 h-8 rounded-lg flex items-center justify-center transition-colors ${AGENT_COLORS[agent].sendBtn}`}
+          aria-label={isLoading ? 'Stop' : 'Send'}
+        >
+          {isLoading ? (
+            <Square className="w-3.5 h-3.5 fill-current" />
+          ) : (
+            <Send className="w-3.5 h-3.5" />
+          )}
+        </button>
+      </div>
+    </div>
+  );
+}

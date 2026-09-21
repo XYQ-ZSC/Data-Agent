@@ -1,0 +1,25 @@
+# IDE
+.idea/
+.cursor/
+.claude
+
+# OS
+.DS_Store
+
+# Maven
+**/target/
+
+# Debug logs
+**/logs/
+.data-agent/
+
+# Local configuration
+**/application-local.yml
+
+# Node
+**/node_modules/
+**/dist/
+
+CLAUDE.md
+
+.remember

@@ -1,0 +1,60 @@
+package edu.zsc.ai.plugin.capability;
+
+import edu.zsc.ai.plugin.constant.JdbcMetaDataConstants;
+import edu.zsc.ai.plugin.manager.DefaultPluginManager;
+import edu.zsc.ai.plugin.model.command.sql.SqlCommandRequest;
+import edu.zsc.ai.plugin.model.command.sql.SqlCommandResult;
+import edu.zsc.ai.plugin.model.metadata.ProcedureMetadata;
+import org.apache.commons.lang3.StringUtils;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import java.sql.Connection;
+import java.sql.DatabaseMetaData;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.util.ArrayList;
+import java.util.List;
+
+public interface ProcedureManager {
+
+    default List<ProcedureMetadata> getProcedures(Connection connection, String catalog, String schema) {
+        return searchProcedures(connection, catalog, schema, null);
+    }
+
+    default List<ProcedureMetadata> searchProcedures(Connection connection, String catalog, String schema, String procedureNamePattern) {
+        try {
+            List<ProcedureMetadata> list = new ArrayList<>();
+            DatabaseMetaData meta = connection.getMetaData();
+            String pattern = StringUtils.isBlank(procedureNamePattern) ? null : procedureNamePattern;
+            try (ResultSet rs = meta.getProcedures(catalog, schema, pattern)) {
+                while (rs.next()) {
+                    short procType = rs.getShort(JdbcMetaDataConstants.PROCEDURE_TYPE);
+                    if (procType == DatabaseMetaData.procedureResultUnknown
+                            || procType == DatabaseMetaData.procedureNoResult
+                            || procType == DatabaseMetaData.procedureReturnsResult) {
+                        String name = rs.getString(JdbcMetaDataConstants.PROCEDURE_NAME);
+                        if (StringUtils.isNotBlank(name)) {
+                            list.add(new ProcedureMetadata(name));
+                        }
+                    }
+                }
+            }
+            return list;
+        } catch (SQLException e) {
+            throw new RuntimeException("Failed to list procedures: " + e.getMessage(), e);
+        }
+    }
+
+    default long countProcedures(Connection connection, String catalog, String schema, String procedureNamePattern) {
+        return searchProcedures(connection, catalog, schema, procedureNamePattern).size();
+    }
+
+    default String getProcedureDdl(Connection connection, String catalog, String schema, String procedureName) {
+        throw new UnsupportedOperationException("Plugin does not support getting procedure DDL");
+    }
+
+    default void deleteProcedure(Connection connection, String catalog, String schema, String procedureName) {
+        throw new UnsupportedOperationException("Plugin does not support deleting procedure");
+    }
+}

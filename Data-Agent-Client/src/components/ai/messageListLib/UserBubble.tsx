@@ -1,0 +1,86 @@
+import React, { useState, useCallback } from 'react';
+import { useTranslation } from 'react-i18next';
+import { Copy, Check } from 'lucide-react';
+import ReactMarkdown from 'react-markdown';
+import { COPY_FEEDBACK_SHORT_MS } from '../../../constants/timing';
+import { expandMentionTokensForCopy, parseMentionSegments } from '../mentionTypes';
+import type { Message } from './types';
+import { I18N_KEYS } from '../../../constants/i18nKeys';
+import { useMarkdownComponents, markdownRemarkPlugins } from '../blocks/markdownComponents';
+
+const MENTION_COLOR_CLASS = 'text-violet-400 font-medium';
+
+function renderContentWithMentions(content: string): React.ReactNode[] {
+  const segments = parseMentionSegments(content);
+  return segments.map((seg, i) =>
+    seg.type === 'mention' ? (
+      <span key={i} className={MENTION_COLOR_CLASS}>
+        {seg.text}
+      </span>
+    ) : (
+      <React.Fragment key={i}>{seg.text}</React.Fragment>
+    )
+  );
+}
+
+export interface UserBubbleProps {
+  message: Message;
+}
+
+export function UserBubble({ message }: UserBubbleProps) {
+  const { t } = useTranslation();
+  const [copied, setCopied] = useState(false);
+  const markdownComponents = useMarkdownComponents();
+
+  const handleCopy = useCallback(async () => {
+    const text = expandMentionTokensForCopy(message.content ?? '', message.userMentions ?? []);
+    if (!text) return;
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), COPY_FEEDBACK_SHORT_MS);
+    } catch {
+      // ignore
+    }
+  }, [message.content, message.userMentions]);
+
+  // Check if content contains markdown syntax
+  const hasMarkdown = /[*_`#\[\]>-]/.test(message.content);
+
+  return (
+    <div className="flex flex-col w-full group/bubble">
+      <div
+        className="relative w-full px-3 py-2 pr-9 rounded-lg text-xs border"
+        style={{
+          backgroundColor: 'var(--user-bubble-bg)',
+          color: 'hsl(var(--user-bubble-text))',
+          borderColor: 'hsl(var(--user-bubble-border))',
+        }}
+      >
+        {hasMarkdown ? (
+          <div className="prose prose-sm max-w-none dark:prose-invert">
+            <ReactMarkdown components={markdownComponents} remarkPlugins={markdownRemarkPlugins}>
+              {message.content}
+            </ReactMarkdown>
+          </div>
+        ) : (
+          <p className="mb-0 leading-relaxed whitespace-pre-wrap">
+            {renderContentWithMentions(message.content)}
+          </p>
+        )}
+        <button
+          type="button"
+          onClick={handleCopy}
+          aria-label={t(I18N_KEYS.AI.COPY)}
+          className="absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded opacity-0 group-hover/bubble:opacity-100 hover:opacity-100 transition-opacity theme-text-secondary hover:theme-text-primary hover:bg-black/10 dark:hover:bg-white/10"
+        >
+          {copied ? (
+            <Check className="w-3.5 h-3.5 text-green-500" aria-hidden />
+          ) : (
+            <Copy className="w-3.5 h-3.5" aria-hidden />
+          )}
+        </button>
+      </div>
+    </div>
+  );
+}

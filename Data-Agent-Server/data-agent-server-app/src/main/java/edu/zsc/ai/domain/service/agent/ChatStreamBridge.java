@@ -1,0 +1,270 @@
+package edu.zsc.ai.domain.service.agent;
+
+import dev.langchain4j.agent.tool.ToolExecutionRequest;
+import dev.langchain4j.service.TokenStream;
+import edu.zsc.ai.agent.memory.ChatMemoryCompressor;
+import edu.zsc.ai.agent.tool.AgentToolTracker;
+import edu.zsc.ai.common.constant.AgentRuntimeLoggerNames;
+import edu.zsc.ai.common.enums.ai.ToolNameEnum;
+import edu.zsc.ai.context.AgentExecutionContext;
+import edu.zsc.ai.domain.event.ChatCompletedEvent;
+import edu.zsc.ai.domain.model.dto.response.agent.ChatResponseBlock;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.apache.commons.lang3.StringUtils;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.stereotype.Component;
+import reactor.core.publisher.Flux;
+import reactor.core.publisher.Sinks;
+
+import java.util.HashSet;
+import java.util.LinkedHashMap;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+
+/**
+ * Bridges a LangChain4j {@link TokenStream} into a reactive
+ * {@code Flux<ChatResponseBlock>} suitable for SSE streaming.
+ */
+@Slf4j
+@Component
+@RequiredArgsConstructor
+public class ChatStreamBridge {
+
+    private static final Logger runtimeLog = LoggerFactory.getLogger(AgentRuntimeLoggerNames.CONVERSATION);
+
+    private final SseEmitterRegistry sseEmitterRegistry;
+    private final ApplicationEventPublisher eventPublisher;
+    private final ChatMemoryCompressor chatMemoryCompressor;
+
+    /**
+     * Start the agent chat from the given session and bridge the resulting
+     * {@link TokenStream} into a {@link Flux} of {@link ChatResponseBlock}.
+     *
+     * @param session     the prepared chat session (agent + parameters)
+     * @param toolTracker shared tracker for recording tool invocations
+     */
+    public Flux<ChatResponseBlock> bridge(
+            ChatSession session,
+            AgentToolTracker toolTracker) {
+
+        Long conversationId = session.conversationId();
+        TokenStream tokenStream = session.startChat();
+
+        Sinks.Many<ChatResponseBlock> sink = Sinks.many().unicast().onBackpressureBuffer();
+        sseEmitterRegistry.register(conversationId, sink);
+        log.debug("[ChatStream] sink registered for conversation {}", conversationId);
+        Set<String> streamedToolCallIds = new HashSet<>();
+        Map<String, Long> toolStartedAtById = new ConcurrentHashMap<>();
+        Map<String, String> toolDescriptionById = new ConcurrentHashMap<>();
+        StringBuilder responseText = new StringBuilder();
+        StringBuilder thinkingText = new StringBuilder();
+
+        tokenStream.onPartialResponse(content -> {
+            if (StringUtils.isNotBlank(content)) {
+                responseText.append(content);
+                sink.tryEmitNext(ChatResponseBlock.text(content));
+            }
+        });
+
+        tokenStream.onPartialThinking(partial -> {
+            if (StringUtils.isNotBlank(partial.text())) {
+                thinkingText.append(partial.text());
+                sink.tryEmitNext(ChatResponseBlock.thought(partial.text()));
+            }
+        });
+
+        tokenStream.onPartialToolCallWithContext((partialToolCall, context) -> {
+            log.debug("Partial tool call: index={}, id={}, name={}, partialArgs='{}'",
+                    partialToolCall.index(), partialToolCall.id(), partialToolCall.name(),
+                    partialToolCall.partialArguments());
+
+            if (Objects.nonNull(partialToolCall.id())) {
+                streamedToolCallIds.add(partialToolCall.id());
+                toolStartedAtById.computeIfAbsent(partialToolCall.id(), ignored -> System.currentTimeMillis());
+                String description = ChatResponseBlock.extractToolDescription(partialToolCall.partialArguments());
+                if (StringUtils.isNotBlank(description)) {
+                    toolDescriptionById.put(partialToolCall.id(), description);
+                }
+                if (ToolNameEnum.isSubAgentTool(partialToolCall.name())) {
+                    log.debug("SubAgent tool detected: setting parentToolCallId={}", partialToolCall.id());
+                    AgentExecutionContext.setParentToolCallId(partialToolCall.id());
+                }
+                runtimeLog.info("conversation_tool_call conversationId={} toolCallId={} toolName={} streaming=true arguments={}",
+                        conversationId,
+                        partialToolCall.id(),
+                        partialToolCall.name(),
+                        StringUtils.defaultString(partialToolCall.partialArguments()));
+            }
+
+            sink.tryEmitNext(ChatResponseBlock.toolCall(
+                    partialToolCall.id(),
+                    partialToolCall.name(),
+                    partialToolCall.partialArguments(),
+                    true,
+                    StringUtils.isNotBlank(partialToolCall.id()) ? toolDescriptionById.get(partialToolCall.id()) : null,
+                    StringUtils.isNotBlank(partialToolCall.id()) ? toolStartedAtById.get(partialToolCall.id()) : null
+            ));
+        });
+
+        tokenStream.onIntermediateResponse(response -> {
+            if (!response.aiMessage().hasToolExecutionRequests()) {
+                return;
+            }
+            for (ToolExecutionRequest toolRequest : response.aiMessage().toolExecutionRequests()) {
+                if (streamedToolCallIds.contains(toolRequest.id())) {
+                    log.debug("Skipping already-streamed tool call: id={}, name={}",
+                            toolRequest.id(), toolRequest.name());
+                    continue;
+                }
+
+                log.debug("Complete tool call (non-streaming provider): id={}, name={}",
+                        toolRequest.id(), toolRequest.name());
+
+                if (ToolNameEnum.isSubAgentTool(toolRequest.name())) {
+                    log.debug("SubAgent tool detected (non-streaming): setting parentToolCallId={}", toolRequest.id());
+                    AgentExecutionContext.setParentToolCallId(toolRequest.id());
+                }
+                if (StringUtils.isNotBlank(toolRequest.id())) {
+                    toolStartedAtById.putIfAbsent(toolRequest.id(), System.currentTimeMillis());
+                    String description = ChatResponseBlock.extractToolDescription(toolRequest.arguments());
+                    if (StringUtils.isNotBlank(description)) {
+                        toolDescriptionById.put(toolRequest.id(), description);
+                    }
+                }
+                runtimeLog.info("conversation_tool_call conversationId={} toolCallId={} toolName={} streaming=false arguments={}",
+                        conversationId,
+                        toolRequest.id(),
+                        toolRequest.name(),
+                        StringUtils.defaultString(toolRequest.arguments()));
+
+                Long startedAt = StringUtils.isNotBlank(toolRequest.id()) ? toolStartedAtById.get(toolRequest.id()) : null;
+                String description = StringUtils.isNotBlank(toolRequest.id()) ? toolDescriptionById.get(toolRequest.id()) : null;
+                sink.tryEmitNext(ChatResponseBlock.toolCall(
+                        toolRequest.id(),
+                        toolRequest.name(),
+                        toolRequest.arguments(),
+                        false,
+                        description,
+                        startedAt
+                ));
+            }
+        });
+
+        tokenStream.onToolExecuted(toolExecution -> {
+            ToolExecutionRequest req = toolExecution.request();
+            toolTracker.record(req.name());
+            log.info("Tool executed: name={}, toolCallId={}, failed={}, resultLen={}",
+                    req.name(), req.id(), toolExecution.hasFailed(),
+                    toolExecution.result() != null ? toolExecution.result().toString().length() : 0);
+
+            if (ToolNameEnum.isSubAgentTool(req.name())) {
+                AgentExecutionContext.clear();
+            }
+            runtimeLog.info("conversation_tool_result conversationId={} toolCallId={} toolName={} failed={} resultLength={} result={}",
+                    conversationId,
+                    req.id(),
+                    req.name(),
+                    toolExecution.hasFailed(),
+                    toolExecution.result() != null ? toolExecution.result().toString().length() : 0,
+                    toolExecution.result());
+
+            Long finishedAt = System.currentTimeMillis();
+            Long startedAt = StringUtils.isNotBlank(req.id()) ? toolStartedAtById.get(req.id()) : null;
+            String description = StringUtils.isNotBlank(req.id()) ? toolDescriptionById.get(req.id()) : null;
+            sink.tryEmitNext(ChatResponseBlock.toolResult(
+                    req.id(),
+                    req.name(),
+                    toolExecution.result(),
+                    toolExecution.hasFailed(),
+                    description,
+                    startedAt,
+                    finishedAt));
+        });
+
+        tokenStream.onCompleteResponse(response -> {
+            AgentExecutionContext.clear();
+            sseEmitterRegistry.unregister(conversationId);
+            log.debug("[ChatStream] sink unregistered for conversation {}", conversationId);
+            collectTokenUsage(response, toolTracker);
+            log.info("Conversation {} completed: toolCount={}, outputTokens={}, totalTokens={}",
+                    conversationId, toolTracker.getTotalCount(),
+                    response.tokenUsage() != null ? response.tokenUsage().outputTokenCount() : null,
+                    response.tokenUsage() != null ? response.tokenUsage().totalTokenCount() : null);
+            runtimeLog.info("conversation_complete conversationId={} toolCount={} toolCounts={} outputTokens={} totalTokens={} responseLength={} thinkingLength={} response=\n{}\nconversation_thinking=\n{}",
+                    conversationId,
+                    toolTracker.getTotalCount(),
+                    toolTracker.getToolCounts(),
+                    response.tokenUsage() != null ? response.tokenUsage().outputTokenCount() : null,
+                    response.tokenUsage() != null ? response.tokenUsage().totalTokenCount() : null,
+                    responseText.length(),
+                    thinkingText.length(),
+                    responseText,
+                    thinkingText);
+            publishChatCompleted(response, conversationId);
+            sink.tryEmitNext(ChatResponseBlock.doneBlock(buildDoneMetadata(conversationId, toolTracker)));
+            sink.tryEmitComplete();
+        });
+
+        tokenStream.onError(error -> {
+            AgentExecutionContext.clear();
+            log.error("Error in chat stream", error);
+            runtimeLog.error("conversation_error conversationId={} responseLength={} thinkingLength={}",
+                    conversationId,
+                    responseText.length(),
+                    thinkingText.length(),
+                    error);
+            sseEmitterRegistry.unregister(conversationId);
+            log.debug("[ChatStream] sink unregistered for conversation {} (on error)", conversationId);
+            sink.tryEmitError(error);
+        });
+
+        tokenStream.start();
+        return sink.asFlux();
+    }
+    private void collectTokenUsage(
+            dev.langchain4j.model.chat.response.ChatResponse response, AgentToolTracker toolTracker) {
+        if (Objects.nonNull(response.tokenUsage())) {
+            toolTracker.setTokenUsage(
+                    response.tokenUsage().outputTokenCount(),
+                    response.tokenUsage().totalTokenCount());
+        }
+    }
+
+    /**
+     * Always publishes {@link ChatCompletedEvent} when the stream completes successfully so downstream
+     * listeners (token persistence, memory autowrite) run even if the provider omits token usage metadata.
+     */
+    private void publishChatCompleted(
+            dev.langchain4j.model.chat.response.ChatResponse response,
+            Long conversationId) {
+        Integer outputTokens = null;
+        Integer totalTokens = null;
+        if (response.tokenUsage() != null) {
+            outputTokens = response.tokenUsage().outputTokenCount();
+            totalTokens = response.tokenUsage().totalTokenCount();
+        }
+
+        if (Objects.nonNull(totalTokens) && totalTokens > 0) {
+            log.info("Chat completed for conversation {}: {} total tokens (output: {})",
+                    conversationId, totalTokens, outputTokens);
+        } else {
+            log.debug(
+                    "Chat completed for conversation {} without usable token usage (memory autowrite still notified)",
+                    conversationId);
+        }
+
+        eventPublisher.publishEvent(
+                new ChatCompletedEvent(this, conversationId, outputTokens, totalTokens));
+    }
+
+    private Map<String, Object> buildDoneMetadata(Long conversationId, AgentToolTracker toolTracker) {
+        Map<String, Object> metadata = new LinkedHashMap<>(toolTracker.toMetadata());
+        metadata.putAll(chatMemoryCompressor.consumeDoneMetadata(conversationId));
+        return metadata;
+    }
+}
