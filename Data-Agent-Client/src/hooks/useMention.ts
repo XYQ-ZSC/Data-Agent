@@ -84,6 +84,11 @@ export function useMention(options: UseMentionOptions): UseMentionReturn {
     ? (supportedDbTypes.find((opt) => opt.code === mentionConnection.dbType)?.supportSchema ?? false)
     : false;
 
+  // Schema-only databases (e.g. DM) have no database layer: connection -> schema -> object.
+  const schemaOnly = mentionConnection
+    ? supportSchema && !(supportedDbTypes.find((opt) => opt.code === mentionConnection.dbType)?.supportDatabase ?? true)
+    : false;
+
   const loadDatabases = useCallback(async (connectionId: number) => {
     setMentionError(null);
     try {
@@ -276,11 +281,18 @@ export function useMention(options: UseMentionOptions): UseMentionReturn {
       setChatContext({ connectionId: conn.id });
       setMentionConnectionId(conn.id);
       setMentionConnection(conn);
-      setMentionLevel('database');
-      loadDatabases(conn.id);
+      const typeOption = supportedDbTypes.find((opt) => opt.code === conn.dbType);
+      const connSchemaOnly = (typeOption?.supportSchema ?? false) && !(typeOption?.supportDatabase ?? true);
+      if (connSchemaOnly) {
+        setMentionLevel('schema');
+        loadSchemas(conn.id, '');
+      } else {
+        setMentionLevel('database');
+        loadDatabases(conn.id);
+      }
       setMentionHighlightedIndex(0);
     },
-    [setChatContext, loadDatabases]
+    [setChatContext, loadDatabases, loadSchemas, supportedDbTypes]
   );
 
   const selectDatabase = useCallback(
@@ -302,14 +314,15 @@ export function useMention(options: UseMentionOptions): UseMentionReturn {
 
   const selectSchema = useCallback(
     (name: string) => {
-      if (mentionConnectionId == null || mentionCatalogName == null) return;
+      if (mentionConnectionId == null) return;
+      if (mentionCatalogName == null && !schemaOnly) return;
       setChatContext((prev) => ({ ...prev, schemaName: name }));
       setMentionSchemaName(name);
       setMentionLevel('object');
-      loadObjects(mentionConnectionId, mentionCatalogName, name);
+      loadObjects(mentionConnectionId, mentionCatalogName ?? '', name);
       setMentionHighlightedIndex(0);
     },
-    [mentionConnectionId, mentionCatalogName, setChatContext, loadObjects]
+    [mentionConnectionId, mentionCatalogName, schemaOnly, setChatContext, loadObjects]
   );
 
   const confirmMentionItem = useCallback((item: MentionItem | undefined) => {
@@ -331,14 +344,18 @@ export function useMention(options: UseMentionOptions): UseMentionReturn {
       setChatContext((prev) => ({ ...prev, catalogName: item.label }));
       shortName = item.label;
       fullPath = `@${mentionConnection.name}/${item.label}`;
-    } else if (mentionLevel === 'schema' && mentionConnection && mentionCatalogName) {
+    } else if (mentionLevel === 'schema' && mentionConnection && (mentionCatalogName || schemaOnly)) {
       setChatContext((prev) => ({ ...prev, schemaName: item.label }));
       shortName = item.label;
-      fullPath = `@${mentionConnection.name}/${mentionCatalogName}/${item.label}`;
-    } else if (mentionLevel === 'object' && mentionConnection && mentionCatalogName) {
+      fullPath = mentionCatalogName
+        ? `@${mentionConnection.name}/${mentionCatalogName}/${item.label}`
+        : `@${mentionConnection.name}/${item.label}`;
+    } else if (mentionLevel === 'object' && mentionConnection && (mentionCatalogName || schemaOnly)) {
       const schemaPart = mentionSchemaName ? `/${mentionSchemaName}` : '';
       shortName = item.label;
-      fullPath = `@${mentionConnection.name}/${mentionCatalogName}${schemaPart}/${item.label}`;
+      fullPath = mentionCatalogName
+        ? `@${mentionConnection.name}/${mentionCatalogName}${schemaPart}/${item.label}`
+        : `@${mentionConnection.name}${schemaPart}/${item.label}`;
     }
 
     closeMention();
@@ -363,6 +380,7 @@ export function useMention(options: UseMentionOptions): UseMentionReturn {
     mentionConnection,
     mentionCatalogName,
     mentionSchemaName,
+    schemaOnly,
     connections,
     setChatContext,
     closeMention,
@@ -403,6 +421,24 @@ export function useMention(options: UseMentionOptions): UseMentionReturn {
       return;
     }
     if (mentionLevel === 'schema') {
+      if (schemaOnly) {
+        setChatContext({});
+        setMentionConnectionId(null);
+        setMentionConnection(null);
+        setMentionCatalogName(null);
+        setMentionSchemaName(null);
+        setMentionLevel('connection');
+        setMentionItems(
+          connections.map((c) => ({
+            id: `${MentionIdPrefix.CONNECTION}${c.id}`,
+            label: c.name,
+            payload: { connectionId: c.id, dbType: c.dbType },
+          }))
+        );
+        setMentionHighlightedIndex(0);
+        setMentionError(null);
+        return;
+      }
       setChatContext((prev) => ({ connectionId: prev.connectionId }));
       setMentionCatalogName(null);
       setMentionSchemaName(null);
@@ -412,11 +448,11 @@ export function useMention(options: UseMentionOptions): UseMentionReturn {
       return;
     }
     if (mentionLevel === 'object') {
-      if (supportSchema && mentionCatalogName) {
-        setChatContext((prev) => ({ connectionId: prev.connectionId, catalogName: mentionCatalogName }));
+      if (supportSchema && (mentionCatalogName || schemaOnly)) {
+        setChatContext((prev) => ({ connectionId: prev.connectionId, catalogName: mentionCatalogName ?? undefined }));
         setMentionSchemaName(null);
         setMentionLevel('schema');
-        if (mentionConnectionId != null) loadSchemas(mentionConnectionId, mentionCatalogName);
+        if (mentionConnectionId != null) loadSchemas(mentionConnectionId, mentionCatalogName ?? '');
       } else {
         setChatContext((prev) => ({ connectionId: prev.connectionId }));
         setMentionCatalogName(null);
@@ -430,6 +466,7 @@ export function useMention(options: UseMentionOptions): UseMentionReturn {
     mentionConnectionId,
     mentionCatalogName,
     supportSchema,
+    schemaOnly,
     connections,
     closeMention,
     setChatContext,

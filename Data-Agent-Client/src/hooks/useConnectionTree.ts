@@ -127,6 +127,24 @@ export function useConnectionTree() {
     if (!connId) return 'none';
 
     if (node.data.type === ExplorerNodeType.ROOT && node.data.dbConnection) {
+      const rootTypeOption = supportedDbTypes.find((opt) => opt.code === node.data.dbConnection?.dbType);
+      const rootSchemaOnly = (rootTypeOption?.supportSchema ?? false) && !(rootTypeOption?.supportDatabase ?? true);
+      if (rootSchemaOnly) {
+        const schemas = getCachedExplorerSchemas(queryClient, connId, undefined);
+        if (!schemas || schemas.length === 0) return 'none';
+        const childrenNodes: ExplorerNode[] = schemas.map((schemaName) => ({
+          id: `${node.id}${ExplorerIdPrefix.SCHEMA}${schemaName}`,
+          name: schemaName,
+          type: ExplorerNodeType.SCHEMA,
+          connectionId: connId,
+          dbConnection: node.data.dbConnection,
+          catalog: undefined,
+          schema: schemaName,
+          children: [],
+        }));
+        updateNodeChildren(node.id, childrenNodes, String(node.data.dbConnection.id));
+        return 'full';
+      }
       const dbNames = getCachedExplorerDatabases(queryClient, String(node.data.dbConnection.id));
       if (!dbNames || dbNames.length === 0) return 'none';
       const childrenNodes: ExplorerNode[] = dbNames.map((name) => ({
@@ -282,6 +300,24 @@ export function useConnectionTree() {
     setNodeLoading(node.id, true);
     try {
       if (node.data.type === ExplorerNodeType.ROOT && node.data.dbConnection) {
+        const typeOption = supportedDbTypes.find((opt) => opt.code === node.data.dbConnection?.dbType);
+        // Schema-only databases (e.g. DM): no database layer, schemas hang directly under the connection.
+        const schemaOnly = (typeOption?.supportSchema ?? false) && !(typeOption?.supportDatabase ?? true);
+        if (schemaOnly) {
+          const schemas = await fetchExplorerSchemas(queryClient, connId, undefined);
+          const childrenNodes: ExplorerNode[] = schemas.map((schemaName) => ({
+            id: `${node.id}${ExplorerIdPrefix.SCHEMA}${schemaName}`,
+            name: schemaName,
+            type: ExplorerNodeType.SCHEMA,
+            connectionId: connId,
+            dbConnection: node.data.dbConnection,
+            catalog: undefined,
+            schema: schemaName,
+            children: [],
+          }));
+          updateNodeChildren(node.id, childrenNodes, String(node.data.dbConnection.id));
+          return;
+        }
         const dbNames = await fetchExplorerDatabases(queryClient, String(node.data.dbConnection.id));
         const childrenNodes: ExplorerNode[] = dbNames.map((name) => ({
           id: `${node.id}${ExplorerIdPrefix.DB}${name}`,
@@ -331,7 +367,9 @@ export function useConnectionTree() {
 
       if (node.data.type === ExplorerNodeType.SCHEMA) {
         const dbNode = node.parent;
-        const dbName = dbNode?.data.name ?? node.data.catalog ?? '';
+        const dbName = dbNode?.data.type === ExplorerNodeType.DB
+          ? dbNode.data.name
+          : (node.data.catalog ?? '');
         const schemaName = node.data.name;
         const folders = await loadDbSchemaFolders({
           connId,

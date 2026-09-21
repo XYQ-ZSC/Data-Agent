@@ -65,6 +65,9 @@ function getJdbcUrl(values: Partial<ConnectionFormValues>): string {
     return `jdbc:oracle:thin:@${host}${portStr}:${database || 'ORCL'}`;
   } else if (type.includes('sqlserver')) {
     return `jdbc:sqlserver://${host}${portStr};databaseName=${database || ''}`;
+  } else if (type === 'dm' || type.includes('dameng')) {
+    // Dameng JDBC URL carries no database segment; schema is chosen after login.
+    return `jdbc:dm://${host}${portStr}`;
   }
 
   return `jdbc:${type}://${host}${portStr}${dbStr}`;
@@ -105,6 +108,10 @@ export function ConnectionFormModal({
   });
 
   const formValues = watch();
+
+  // Hide the database field for db types that have no database concept (e.g. DM, Oracle).
+  const selectedDbType = dbTypes.find((opt) => opt.code === formValues.dbType);
+  const showDatabaseField = selectedDbType?.supportDatabase ?? true;
 
   // Fetch connection data if in edit mode
   const { data: connection } = useQuery({
@@ -276,10 +283,12 @@ export function ConnectionFormModal({
                 </div>
               </div>
 
-              <div className="grid gap-2">
-                <label className="text-sm font-medium">{t(I18N_KEYS.CONNECTIONS.DATABASE)}</label>
-                <Input {...register('database')} />
-              </div>
+              {showDatabaseField && (
+                <div className="grid gap-2">
+                  <label className="text-sm font-medium">{t(I18N_KEYS.CONNECTIONS.DATABASE)}</label>
+                  <Input {...register('database')} />
+                </div>
+              )}
 
               <div className="grid gap-2">
                 <label className="text-sm font-medium">{t(I18N_KEYS.CONNECTIONS.USERNAME)}</label>
