@@ -39,14 +39,9 @@ public class DmIdentifierEscaper implements SqlIdentifierEscaper {
         if (StringUtils.isEmpty(identifier)) {
             return identifier;
         }
-
-        String escaped = escapeIdentifier(identifier);
-
-        if (needsQuoting(identifier)) {
-            return DOUBLE_QUOTE + escaped + DOUBLE_QUOTE;
-        }
-
-        return escaped;
+        // Metadata names are already resolved by DM. Always quote each part so
+        // a mixed-case or reserved-word name keeps its exact database spelling.
+        return DOUBLE_QUOTE + escapeIdentifier(identifier) + DOUBLE_QUOTE;
     }
 
     /**

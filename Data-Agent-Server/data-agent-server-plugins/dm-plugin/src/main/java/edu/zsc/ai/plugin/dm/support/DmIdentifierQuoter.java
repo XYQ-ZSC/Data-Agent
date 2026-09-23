@@ -1,6 +1,8 @@
 package edu.zsc.ai.plugin.dm.support;
 
 import org.apache.commons.lang3.StringUtils;
+import edu.zsc.ai.plugin.dm.util.DmIdentifierEscaper;
+import edu.zsc.ai.plugin.dm.util.DmIdentifierBuilder;
 
 /**
  * Package-private double-quote identifier helper for DM (DaMeng).
@@ -17,8 +19,6 @@ import org.apache.commons.lang3.StringUtils;
  */
 final class DmIdentifierQuoter {
 
-    private static final char DOUBLE_QUOTE = '"';
-
     private DmIdentifierQuoter() {
     }
 
@@ -32,8 +32,7 @@ final class DmIdentifierQuoter {
         if (StringUtils.isBlank(identifier)) {
             throw new IllegalArgumentException("Identifier must not be null or empty");
         }
-        String escaped = StringUtils.replace(identifier, "\"", "\"\"");
-        return DOUBLE_QUOTE + escaped + DOUBLE_QUOTE;
+        return DmIdentifierEscaper.getInstance().quoteIdentifier(identifier);
     }
 
     /**
@@ -47,9 +46,6 @@ final class DmIdentifierQuoter {
         if (StringUtils.isBlank(objectName)) {
             throw new IllegalArgumentException("Object name must not be null or empty");
         }
-        if (StringUtils.isNotBlank(qualifier)) {
-            return quote(qualifier.trim()) + "." + quote(objectName.trim());
-        }
-        return quote(objectName.trim());
+        return DmIdentifierBuilder.buildFullIdentifier(qualifier, objectName.trim());
     }
 }

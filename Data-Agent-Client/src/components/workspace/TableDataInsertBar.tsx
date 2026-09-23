@@ -12,6 +12,7 @@ interface TableDataInsertBarProps {
   insertSubmitting: boolean;
   insertError: string | null;
   newRowValues: Record<string, string>;
+  isDm?: boolean;
   onNewRowValueChange: (column: string, value: string) => void;
   onConfirmInsert: () => void;
   onCancelInsert: () => void;
@@ -25,6 +26,7 @@ export function TableDataInsertBar({
   insertSubmitting,
   insertError,
   newRowValues,
+  isDm = false,
   onNewRowValueChange,
   onConfirmInsert,
   onCancelInsert,
@@ -70,6 +72,9 @@ export function TableDataInsertBar({
         </div>
       </div>
       <div className="overflow-x-auto">
+        {isDm && (
+          <p className="mb-2 text-[10px] theme-text-secondary">{t(I18N_KEYS.EXPLORER.DM_EMPTY_STRING_HINT)}</p>
+        )}
         <div className="flex min-w-max gap-2">
           {loadingColumns ? (
             <div className="rounded border theme-border bg-[color:var(--bg-main)]/70 px-3 py-2 text-[11px] theme-text-secondary">
@@ -83,6 +88,9 @@ export function TableDataInsertBar({
                   <div className="mb-1 truncate text-[10px] theme-text-secondary">{header}</div>
                   <Input
                     value={newRowValues[header] ?? ''}
+                    onFocus={() => {
+                      if (isDm && newRowValues[header] === undefined) onNewRowValueChange(header, '');
+                    }}
                     onChange={(e) => onNewRowValueChange(header, e.target.value)}
                     onKeyDown={(e) => {
                       if (e.key === 'Enter') onConfirmInsert();

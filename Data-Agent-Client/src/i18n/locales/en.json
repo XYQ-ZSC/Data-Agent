@@ -484,6 +484,8 @@
     "add_row": "Add Row",
     "delete_row": "Delete Row",
     "insert_row": "Insert Row",
+    "dm_empty_string_hint": "DM: untouched field = NULL; focus and leave blank = empty string; enter NULL = SQL NULL.",
+    "dm_cell_edit_hint": "DM cell editing: clear a cell for an empty string; enter NULL for SQL NULL.",
     "rename_table": "Rename Table",
     "rename_table_prompt": "Enter a new name for table \"{{name}}\".",
     "rename_table_success": "Rename successful",

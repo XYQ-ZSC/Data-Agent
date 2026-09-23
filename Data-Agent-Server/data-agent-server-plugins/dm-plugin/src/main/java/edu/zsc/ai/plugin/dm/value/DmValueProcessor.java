@@ -15,10 +15,8 @@ import java.util.Objects;
  *
  * <p>DM-specific semantics handled here:
  * <ul>
- *   <li>Empty string is stored/returned as SQL NULL (Oracle-compatible), so a
- *       {@code null} value from the driver is returned directly without the
- *       MySQL-style "0000-00-00" string fallback (DM rejects invalid dates at
- *       write time, that case cannot occur).</li>
+ *   <li>Null and empty-string JDBC results are kept distinct, according to
+ *       the actual server and driver behavior.</li>
  *   <li>BLOB/CLOB/BFILE streaming extraction, TIMESTAMP WITH TIME ZONE, BIT and
  *       NUMBER precision are delegated to type-specific processors via
  *       {@link DmValueProcessorFactory}.</li>
@@ -41,16 +39,14 @@ public class DmValueProcessor extends DefaultValueProcessor {
         int columnIndex = context.getColumnIndex();
 
         // First check if value is null.
-        // DM treats empty string as NULL (Oracle-compatible semantics), so a null
-        // from the driver already covers the empty-string case. Unlike MySQL there
-        // are no invalid-date literals ("0000-00-00") to recover, return null as-is.
+        // Preserve the driver's result: DM compatibility modes can differ in
+        // whether an empty string round-trips as empty or as SQL NULL.
         Object value = resultSet.getObject(columnIndex);
         if (Objects.isNull(value)) {
             return null;
         }
 
-        // Defensive: an actual empty string should not survive a round-trip in DM,
-        // but keep it if the driver ever hands one back.
+        // Do not silently turn an empty JDBC string into SQL NULL.
         if (value instanceof String emptyStr && emptyStr.isEmpty()) {
             return emptyStr;
         }

@@ -26,6 +26,7 @@ interface TableDataTabProps {
 
 export function TableDataTab({ tabId, metadata }: TableDataTabProps) {
   const { t } = useTranslation();
+  const isDm = metadata.dbType?.toLowerCase() === 'dm';
   const {
     data,
     loading,
@@ -118,6 +119,12 @@ export function TableDataTab({ tabId, metadata }: TableDataTabProps) {
         onViewModeChange={handleViewModeChange}
       />
 
+      {isDm && isTable && !isAddingRow && (
+        <div className="px-3 py-1 text-[10px] theme-text-secondary border-b theme-border">
+          {t(I18N_KEYS.EXPLORER.DM_CELL_EDIT_HINT)}
+        </div>
+      )}
+
       <TableDataFilterBar
         columns={columns}
         whereClause={whereClause}
@@ -138,6 +145,7 @@ export function TableDataTab({ tabId, metadata }: TableDataTabProps) {
         insertSubmitting={insertSubmitting}
         insertError={insertError}
         newRowValues={newRowValues}
+        isDm={isDm}
         onNewRowValueChange={handleNewRowValueChange}
         onConfirmInsert={handleConfirmInsert}
         onCancelInsert={handleCancelAddRow}

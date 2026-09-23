@@ -7,7 +7,6 @@ import org.junit.jupiter.api.Test;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
-import java.sql.Types;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -53,7 +52,7 @@ class DmRowWriteSupportTest {
     }
 
     @Test
-    void insertRow_normalizesEmptyStringToNull() throws Exception {
+    void insertRow_preservesEmptyStringAsJbdcParameter() throws Exception {
         Connection connection = mock(Connection.class);
         PreparedStatement statement = mock(PreparedStatement.class);
         when(connection.prepareStatement(anyString())).thenReturn(statement);
@@ -63,7 +62,7 @@ class DmRowWriteSupportTest {
                 List.of(new TableRowValue("name", "")));
 
         verify(connection).prepareStatement("INSERT INTO \"HR\".\"users\" (\"name\") VALUES (?)");
-        verify(statement).setNull(1, Types.NULL);
+        verify(statement).setObject(1, "");
         assertTrue(result.isSuccess());
     }
 
@@ -173,7 +172,31 @@ class DmRowWriteSupportTest {
     }
 
     @Test
-    void deleteRow_usesIsNullPredicateForEmptyStringMatch() throws Exception {
+    void deleteRow_bindsEmptyStringMatchWithoutAssumingCompatibilityMode() throws Exception {
+        Connection connection = mock(Connection.class);
+        PreparedStatement countStatement = mock(PreparedStatement.class);
+        PreparedStatement deleteStatement = mock(PreparedStatement.class);
+        ResultSet resultSet = mock(ResultSet.class);
+        when(connection.prepareStatement("SELECT COUNT(*) AS total FROM \"HR\".\"users\" WHERE \"name\" = ?"))
+                .thenReturn(countStatement);
+        when(connection.prepareStatement("DELETE FROM \"HR\".\"users\" WHERE \"name\" = ?"))
+                .thenReturn(deleteStatement);
+        when(countStatement.executeQuery()).thenReturn(resultSet);
+        when(resultSet.next()).thenReturn(true);
+        when(resultSet.getLong("total")).thenReturn(1L);
+        when(deleteStatement.executeUpdate()).thenReturn(1);
+
+        SqlCommandResult result = support.deleteRow(connection, null, "HR", "users",
+                List.of(new TableRowValue("name", "")), false);
+
+        assertTrue(result.isSuccess());
+        verify(countStatement).setObject(1, "");
+        verify(deleteStatement).setObject(1, "");
+        assertEquals("DELETE FROM \"HR\".\"users\" WHERE \"name\" = ?", result.getExecutedSql());
+    }
+
+    @Test
+    void deleteRow_usesIsNullOnlyForExplicitNullMatch() throws Exception {
         Connection connection = mock(Connection.class);
         PreparedStatement countStatement = mock(PreparedStatement.class);
         PreparedStatement deleteStatement = mock(PreparedStatement.class);
@@ -188,7 +211,7 @@ class DmRowWriteSupportTest {
         when(deleteStatement.executeUpdate()).thenReturn(1);
 
         SqlCommandResult result = support.deleteRow(connection, null, "HR", "users",
-                List.of(new TableRowValue("name", "")), false);
+                java.util.Collections.singletonList(new TableRowValue("name", null)), false);
 
         assertTrue(result.isSuccess());
         assertEquals("DELETE FROM \"HR\".\"users\" WHERE \"name\" IS NULL", result.getExecutedSql());
@@ -244,7 +267,7 @@ class DmRowWriteSupportTest {
     }
 
     @Test
-    void updateRow_normalizesEmptyStringSetValueToNull() throws Exception {
+    void updateRow_preservesEmptyStringSetValue() throws Exception {
         Connection connection = mock(Connection.class);
         PreparedStatement countStatement = mock(PreparedStatement.class);
         PreparedStatement updateStatement = mock(PreparedStatement.class);
@@ -262,7 +285,7 @@ class DmRowWriteSupportTest {
                 List.of(new TableRowValue("name", "")),
                 List.of(new TableRowValue("id", 7L)), false);
 
-        verify(updateStatement).setNull(1, Types.NULL);
+        verify(updateStatement).setObject(1, "");
         verify(updateStatement).setObject(2, 7L);
     }
 

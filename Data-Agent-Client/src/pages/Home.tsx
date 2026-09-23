@@ -12,6 +12,9 @@ import { useWorkspaceStore } from "../store/workspaceStore";
 import type { TableTabMetadata, PlanTabMetadata, SubAgentConsoleTabMetadata } from "../types/tab";
 import type { ExecuteSqlResponse } from "../types/sql";
 import { sqlExecutionService } from "../services/sqlExecution.service";
+import { connectionService } from "../services/connection.service";
+import { getSqlDialectByDbType } from "../constants/sqlDialect";
+import { formatSql } from "../utils/sql";
 import { I18N_KEYS } from "../constants/i18nKeys";
 
 export default function Home() {
@@ -21,12 +24,31 @@ export default function Home() {
     const [executeResult, setExecuteResult] = useState<ExecuteSqlResponse | null>(null);
     const editorRef = useRef<MonacoEditorHandle | null>(null);
     const [isRunning, setIsRunning] = useState(false);
+    const [connectionType, setConnectionType] = useState<{ id: number; dbType: string } | null>(null);
 
     const activeTab = tabs.find(t => t.id === activeTabId);
     const isSpecialTab = activeTab?.type === 'plan' || activeTab?.type === 'subagent-console';
     const sqlContext = !isSpecialTab
         ? activeTab?.metadata as import('../types/tab').ConsoleTabMetadata | undefined
         : undefined;
+
+    useEffect(() => {
+        const connectionId = sqlContext?.connectionId;
+        setConnectionType(null);
+        if (!connectionId) return;
+        let cancelled = false;
+        connectionService.getConnectionById(connectionId)
+            .then(connection => { if (!cancelled) setConnectionType({ id: connectionId, dbType: connection.dbType }); })
+            .catch(() => { if (!cancelled) setConnectionType(null); });
+        return () => { cancelled = true; };
+    }, [sqlContext?.connectionId]);
+
+    const handleFormatSql = useCallback(() => {
+        if (!activeTab || activeTab.type !== 'file' || !connectionType || connectionType.id !== sqlContext?.connectionId) return;
+        const original = activeTab.content || '';
+        const formatted = formatSql(original, getSqlDialectByDbType(connectionType.dbType), connectionType.dbType);
+        if (formatted !== original) updateTabContent(activeTab.id, formatted);
+    }, [activeTab, connectionType, sqlContext?.connectionId, updateTabContent]);
 
     const handleRunQuery = useCallback(async () => {
         const sql = editorRef.current?.getSelectionOrAllContent().trim()
@@ -109,6 +131,7 @@ export default function Home() {
                             <div className="workbench-header flex h-10 items-center gap-1 px-3 text-[10px] theme-text-secondary shrink-0">
                                 <Toolbar
                                     onRun={handleRunQuery}
+                                    onFormat={connectionType && connectionType.id === sqlContext?.connectionId ? handleFormatSql : undefined}
                                     onStop={() => setIsRunning(false)}
                                     isRunning={isRunning}
                                     connectionId={sqlContext?.connectionId}

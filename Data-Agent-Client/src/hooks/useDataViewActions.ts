@@ -260,6 +260,7 @@ export function useDataViewActions({
         content: '',
         metadata: {
           connectionId: Number(connId),
+          dbType: node.dbConnection?.dbType || connection?.dbType,
           connectionName,
           databaseName,
           schemaName,

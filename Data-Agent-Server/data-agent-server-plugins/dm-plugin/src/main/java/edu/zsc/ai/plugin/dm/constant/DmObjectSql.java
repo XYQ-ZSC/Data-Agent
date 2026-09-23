@@ -24,14 +24,14 @@ public final class DmObjectSql {
     /** Append SQL_ROUTINES_NAME_CLAUSE (optional) and then SQL_ROUTINES_ORDER_BY. */
     public static final String SQL_LIST_ROUTINES =
             "SELECT OBJECT_NAME FROM ALL_OBJECTS"
-                    + " WHERE UPPER(OWNER) = UPPER(?)"
+                    + " WHERE OWNER = ?"
                     + " AND OBJECT_TYPE = ?";
     public static final String SQL_ROUTINES_NAME_CLAUSE = " AND UPPER(OBJECT_NAME) LIKE UPPER(?)";
     public static final String SQL_ROUTINES_ORDER_BY = " ORDER BY OBJECT_NAME";
     /** Append SQL_ROUTINES_NAME_CLAUSE when a name pattern is present. */
     public static final String SQL_COUNT_ROUTINES =
             "SELECT COUNT(*) AS TOTAL FROM ALL_OBJECTS"
-                    + " WHERE UPPER(OWNER) = UPPER(?)"
+                    + " WHERE OWNER = ?"
                     + " AND OBJECT_TYPE = ?";
 
     // --- ALL_ARGUMENTS (params: owner; %s = IN clause of quoted object-name literals) ---
@@ -39,7 +39,7 @@ public final class DmObjectSql {
     public static final String SQL_FETCH_ARGUMENTS =
             "SELECT OBJECT_NAME, ARGUMENT_NAME, DATA_TYPE, POSITION"
                     + " FROM ALL_ARGUMENTS"
-                    + " WHERE UPPER(OWNER) = UPPER(?)"
+                    + " WHERE OWNER = ?"
                     + " AND PACKAGE_NAME IS NULL"
                     + " AND OBJECT_NAME IN (%s)"
                     + " AND POSITION > 0"
@@ -50,8 +50,8 @@ public final class DmObjectSql {
     public static final String SQL_LIST_TRIGGERS =
             "SELECT TRIGGER_NAME, TABLE_NAME, TRIGGERING_TYPE, TRIGGERING_EVENT, STATUS"
                     + " FROM ALL_TRIGGERS"
-                    + " WHERE UPPER(OWNER) = UPPER(?)";
-    public static final String SQL_TRIGGER_TABLE_CLAUSE = " AND UPPER(TABLE_NAME) = UPPER(?)";
+                    + " WHERE OWNER = ?";
+    public static final String SQL_TRIGGER_TABLE_CLAUSE = " AND TABLE_NAME = ?";
     public static final String SQL_TRIGGERS_ORDER_BY = " ORDER BY TRIGGER_NAME";
 
     // --- ALL_INDEXES (params: tableOwner, tableName) ---
@@ -62,16 +62,16 @@ public final class DmObjectSql {
                     + " FROM ALL_INDEXES i"
                     + " LEFT JOIN ALL_CONSTRAINTS c"
                     + " ON c.OWNER = i.OWNER AND c.INDEX_NAME = i.INDEX_NAME AND c.CONSTRAINT_TYPE = 'P'"
-                    + " WHERE UPPER(i.TABLE_OWNER) = UPPER(?)"
-                    + " AND UPPER(i.TABLE_NAME) = UPPER(?)"
+                    + " WHERE i.TABLE_OWNER = ?"
+                    + " AND i.TABLE_NAME = ?"
                     + " ORDER BY i.INDEX_NAME";
 
     // --- ALL_IND_COLUMNS (params: indexOwner, tableName) ---
     public static final String SQL_LIST_INDEX_COLUMNS =
             "SELECT INDEX_NAME, COLUMN_NAME, COLUMN_POSITION"
                     + " FROM ALL_IND_COLUMNS"
-                    + " WHERE UPPER(INDEX_OWNER) = UPPER(?)"
-                    + " AND UPPER(TABLE_NAME) = UPPER(?)"
+                    + " WHERE INDEX_OWNER = ?"
+                    + " AND TABLE_NAME = ?"
                     + " ORDER BY INDEX_NAME, COLUMN_POSITION";
 
     // --- dbms_metadata (%s = escaped literals: object type, object name, owner schema) ---

@@ -9,7 +9,7 @@ class DmIdentifierBuilderTest {
 
     @Test
     void buildFullIdentifierWithSchema() {
-        assertEquals("SYSDBA.users", DmIdentifierBuilder.buildFullIdentifier("SYSDBA", "users"));
+        assertEquals("\"SYSDBA\".\"users\"", DmIdentifierBuilder.buildFullIdentifier("SYSDBA", "users"));
     }
 
     @Test
@@ -20,14 +20,14 @@ class DmIdentifierBuilderTest {
 
     @Test
     void buildFullIdentifierEscapesEmbeddedQuotes() {
-        assertEquals("\"sch\"\"em\".t", DmIdentifierBuilder.buildFullIdentifier("sch\"em", "t"));
+        assertEquals("\"sch\"\"em\".\"t\"", DmIdentifierBuilder.buildFullIdentifier("sch\"em", "t"));
     }
 
     @Test
     void buildFullIdentifierWithoutSchema() {
-        assertEquals("users", DmIdentifierBuilder.buildFullIdentifier(null, "users"));
-        assertEquals("users", DmIdentifierBuilder.buildFullIdentifier("", "users"));
-        assertEquals("users", DmIdentifierBuilder.buildFullIdentifier("   ", "users"));
+        assertEquals("\"users\"", DmIdentifierBuilder.buildFullIdentifier(null, "users"));
+        assertEquals("\"users\"", DmIdentifierBuilder.buildFullIdentifier("", "users"));
+        assertEquals("\"users\"", DmIdentifierBuilder.buildFullIdentifier("   ", "users"));
     }
 
     @Test

@@ -39,12 +39,12 @@ public final class DmColumnManager implements ColumnManager {
         }
 
         String owner = support.resolveSchema(connection, schema);
-        String upperTableName = tableOrViewName.trim().toUpperCase(java.util.Locale.ROOT);
+        String exactTableName = tableOrViewName.trim();
 
         Map<String, String> commentsByColumn = new HashMap<>();
-        for (String[] columnComment : support.getColumnComments(connection, owner, upperTableName)) {
+        for (String[] columnComment : support.getColumnComments(connection, owner, exactTableName)) {
             if (StringUtils.isNotBlank(columnComment[0]) && StringUtils.isNotBlank(columnComment[1])) {
-                commentsByColumn.put(columnComment[0].toUpperCase(java.util.Locale.ROOT), columnComment[1]);
+                commentsByColumn.put(columnComment[0], columnComment[1]);
             }
         }
         if (commentsByColumn.isEmpty()) {
@@ -57,7 +57,7 @@ public final class DmColumnManager implements ColumnManager {
                 enriched.add(column);
                 continue;
             }
-            String comment = commentsByColumn.get(column.name().toUpperCase(java.util.Locale.ROOT));
+            String comment = commentsByColumn.get(column.name());
             if (comment == null) {
                 enriched.add(column);
                 continue;

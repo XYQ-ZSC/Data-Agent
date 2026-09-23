@@ -18,7 +18,7 @@ class DmObjectSqlTest {
     @Test
     void routineListQueryTargetsAllObjects() {
         assertTrue(DmObjectSql.SQL_LIST_ROUTINES.contains("FROM ALL_OBJECTS"));
-        assertTrue(DmObjectSql.SQL_LIST_ROUTINES.contains("UPPER(OWNER) = UPPER(?)"));
+        assertTrue(DmObjectSql.SQL_LIST_ROUTINES.contains("OWNER = ?"));
         assertTrue(DmObjectSql.SQL_LIST_ROUTINES.contains("OBJECT_TYPE = ?"));
         assertTrue(DmObjectSql.SQL_COUNT_ROUTINES.startsWith("SELECT COUNT(*) AS TOTAL FROM ALL_OBJECTS"));
         assertEquals(" AND UPPER(OBJECT_NAME) LIKE UPPER(?)", DmObjectSql.SQL_ROUTINES_NAME_CLAUSE);
@@ -36,7 +36,7 @@ class DmObjectSqlTest {
     void triggerQueriesTargetAllTriggers() {
         assertTrue(DmObjectSql.SQL_LIST_TRIGGERS.contains("FROM ALL_TRIGGERS"));
         assertTrue(DmObjectSql.SQL_LIST_TRIGGERS.contains("TRIGGERING_EVENT"));
-        assertEquals(" AND UPPER(TABLE_NAME) = UPPER(?)", DmObjectSql.SQL_TRIGGER_TABLE_CLAUSE);
+        assertEquals(" AND TABLE_NAME = ?", DmObjectSql.SQL_TRIGGER_TABLE_CLAUSE);
     }
 
     @Test

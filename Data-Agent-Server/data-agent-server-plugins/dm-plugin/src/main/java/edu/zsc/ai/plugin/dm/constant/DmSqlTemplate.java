@@ -8,10 +8,10 @@ package edu.zsc.ai.plugin.dm.constant;
 public final class DmSqlTemplate {
 
     // --- DBMS_METADATA DDL extraction ---
-    /** Parameters: 1 = table name (uppercase), 2 = owner schema (uppercase). */
+    /** Parameters: 1 = exact table name, 2 = exact owner schema. */
     public static final String SQL_GET_TABLE_DDL =
             "SELECT DBMS_METADATA.GET_DDL('TABLE', ?, ?) FROM DUAL";
-    /** Parameters: 1 = view name (uppercase), 2 = owner schema (uppercase). */
+    /** Parameters: 1 = exact view name, 2 = exact owner schema. */
     public static final String SQL_GET_VIEW_DDL =
             "SELECT DBMS_METADATA.GET_DDL('VIEW', ?, ?) FROM DUAL";
 
@@ -26,11 +26,11 @@ public final class DmSqlTemplate {
     public static final String SQL_RENAME_TABLE = "ALTER TABLE %s RENAME TO %s";
 
     // --- Comments (Oracle compatible dictionary views) ---
-    /** Parameters: 1 = owner schema (uppercase), 2 = table name (uppercase). */
+    /** Parameters: 1 = exact owner schema, 2 = exact table name. */
     public static final String SQL_TABLE_COMMENT =
             "SELECT COMMENTS FROM ALL_TAB_COMMENTS"
                     + " WHERE OWNER = ? AND TABLE_NAME = ? AND TABLE_TYPE = 'TABLE'";
-    /** Parameters: 1 = owner schema (uppercase), 2 = table name (uppercase). */
+    /** Parameters: 1 = exact owner schema, 2 = exact table name. */
     public static final String SQL_COLUMN_COMMENTS =
             "SELECT COLUMN_NAME, COMMENTS FROM ALL_COL_COMMENTS"
                     + " WHERE OWNER = ? AND TABLE_NAME = ?";

@@ -1,6 +1,8 @@
 package edu.zsc.ai.plugin.dm.support;
 
 import edu.zsc.ai.plugin.dm.constant.DmObjectSql;
+import edu.zsc.ai.plugin.dm.util.DmIdentifierBuilder;
+import edu.zsc.ai.plugin.dm.util.DmIdentifierEscaper;
 import edu.zsc.ai.plugin.model.metadata.ParameterInfo;
 import org.apache.commons.lang3.StringUtils;
 
@@ -23,8 +25,8 @@ import java.util.Set;
  * (index / function / procedure / trigger managers).
  *
  * <p>DM has no catalog: the catalog parameter is ignored by callers and only
- * the schema is used. Unquoted identifiers are stored uppercase in DM, so all
- * dictionary filters compare with {@code UPPER(...) = UPPER(?)}.
+ * the schema is used. Dictionary filters use the exact metadata spelling so
+ * quoted names differing only by case remain distinct.
  */
 public final class DmObjectQuerySupport {
 
@@ -60,14 +62,12 @@ public final class DmObjectQuerySupport {
 
     /** Quote an identifier with double quotes, doubling embedded quotes. */
     public static String quoteIdentifier(String identifier) {
-        return '"' + identifier.replace("\"", "\"\"") + '"';
+        return DmIdentifierEscaper.getInstance().quoteIdentifier(identifier);
     }
 
     /** Build a full quoted identifier: "SCHEMA"."NAME" (schema part omitted when blank). */
     public static String buildFullIdentifier(String schema, String name) {
-        return StringUtils.isNotBlank(schema)
-                ? quoteIdentifier(schema) + "." + quoteIdentifier(name)
-                : quoteIdentifier(name);
+        return DmIdentifierBuilder.buildFullIdentifier(schema, name);
     }
 
     /** Escape a value for use inside a single-quoted SQL string literal. */

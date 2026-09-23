@@ -13,6 +13,7 @@ export function useTableDataTabState({ tabId, metadata }: UseTableDataTabStateAr
 
   const rowActions = useTableDataRowActions({
     metadata,
+    isDm: metadata.dbType?.toLowerCase() === 'dm',
     connId: String(metadata.connectionId),
     objectName: metadata.objectName,
     objectType: metadata.objectType,

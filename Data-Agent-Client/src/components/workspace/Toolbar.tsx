@@ -1,4 +1,4 @@
-import { Play, Square, CheckCircle, RotateCcw } from 'lucide-react';
+import { Play, Square, CheckCircle, RotateCcw, WandSparkles } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import type { ReactNode } from 'react';
 import { I18N_KEYS } from '../../constants/i18nKeys';
@@ -17,6 +17,7 @@ import { getPlatformShortcuts } from '../../lib/platformShortcuts';
 
 interface ToolbarProps {
   onRun: () => void;
+  onFormat?: () => void;
   onStop?: () => void;
   isRunning?: boolean;
   connectionId?: number;
@@ -27,6 +28,7 @@ interface ToolbarProps {
 
 export function Toolbar({
   onRun,
+  onFormat,
   onStop,
   isRunning = false,
   connectionId,
@@ -86,6 +88,19 @@ export function Toolbar({
           <Play className="w-3.5 h-3.5 fill-current text-green-500" />
         )}
       </Button>
+
+      {onFormat && (
+        <Button
+          variant="ghost"
+          size="icon"
+          onClick={onFormat}
+          disabled={isRunning}
+          title={t(I18N_KEYS.COMMON.FORMAT_SQL)}
+          className={actionButtonClass}
+        >
+          <WandSparkles className="w-3.5 h-3.5" />
+        </Button>
+      )}
 
       {/* Divider */}
       <div className="mx-1 workbench-toolbar-divider" />

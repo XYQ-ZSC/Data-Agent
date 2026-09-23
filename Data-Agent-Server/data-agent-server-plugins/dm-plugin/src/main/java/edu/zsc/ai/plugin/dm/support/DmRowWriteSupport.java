@@ -22,9 +22,8 @@ import java.util.List;
  *   <li>Identifiers are always double-quoted and fully qualified as
  *       {@code "schema"."table"} (schema is the qualifier in DM; catalog is
  *       only used as a fallback).</li>
- *   <li>Empty strings are normalized to NULL on the write path, matching DM's
- *       Oracle-compatible semantics where '' IS NULL. Consequently an
- *       empty-string match value generates an {@code IS NULL} predicate.</li>
+ *   <li>Empty strings and SQL NULL remain distinct JDBC inputs. The server's
+ *       compatibility mode decides how an empty string is stored.</li>
  * </ul>
  *
  * @author hhz
@@ -231,9 +230,8 @@ public final class DmRowWriteSupport {
     /**
      * Normalize a value before binding.
      *
-     * <p>DM treats an empty string as NULL (Oracle-compatible), so empty
-     * CharSequences are normalized to null to make that intent explicit and to
-     * keep match-clause generation (IS NULL) consistent with stored data.
+     * Preserve an empty string as an empty JDBC value. Only an explicit Java
+     * null is bound as SQL NULL or matched with IS NULL.
      */
     private Object normalizePreparedValue(Object value) {
         if (value == null
@@ -244,8 +242,7 @@ public final class DmRowWriteSupport {
             return value;
         }
         if (value instanceof CharSequence charSequence) {
-            // DM empty-string-is-NULL semantics
-            return charSequence.length() == 0 ? null : charSequence.toString();
+            return charSequence.toString();
         }
         return String.valueOf(value);
     }

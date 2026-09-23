@@ -41,7 +41,7 @@ public final class DmTableManager implements TableManager {
                 DatabaseObjectTypeEnum.TABLE.getValue()
         );
 
-        String upperTableName = tableName.trim().toUpperCase(java.util.Locale.ROOT);
+        String exactTableName = tableName.trim();
         StringBuilder script = new StringBuilder(ddl.trim());
         if (script.length() == 0 || script.charAt(script.length() - 1) != ';') {
             script.append(';');
@@ -49,7 +49,7 @@ public final class DmTableManager implements TableManager {
 
         String fullTableName = DmIdentifierBuilder.buildFullIdentifier(owner, tableName);
 
-        String tableComment = support.getTableComment(connection, owner, upperTableName);
+        String tableComment = support.getTableComment(connection, owner, exactTableName);
         if (StringUtils.isNotBlank(tableComment)) {
             script.append(System.lineSeparator()).append(String.format(
                     DmSqlTemplate.SQL_COMMENT_ON_TABLE,
@@ -57,7 +57,7 @@ public final class DmTableManager implements TableManager {
                     DmIdentifierEscaper.getInstance().escapeStringLiteral(tableComment.trim())));
         }
 
-        List<String[]> columnComments = support.getColumnComments(connection, owner, upperTableName);
+        List<String[]> columnComments = support.getColumnComments(connection, owner, exactTableName);
         for (String[] columnComment : columnComments) {
             String columnName = columnComment[0];
             String comment = columnComment[1];

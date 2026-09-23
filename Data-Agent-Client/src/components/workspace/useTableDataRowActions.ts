@@ -11,6 +11,7 @@ import type { TableTabMetadata } from '../../types/tab';
 import type { TableDataGridAgRow } from './tableDataGridAgUtils';
 import type { LoadDataOverrides, SelectedTableRow } from './tableDataTabShared';
 import { formatCellValue, toRowMatchValue } from './tableDataTabShared';
+import { normalizeEditedCellInput, normalizeInsertInput } from './tableDataInputValues';
 
 type DeleteConfirmMode = 'single' | 'force';
 
@@ -24,6 +25,7 @@ interface PendingUpdate {
 
 interface UseTableDataRowActionsArgs {
   metadata: TableTabMetadata;
+  isDm: boolean;
   connId: string;
   objectName: string;
   objectType: TableTabMetadata['objectType'];
@@ -39,6 +41,7 @@ interface UseTableDataRowActionsArgs {
 
 export function useTableDataRowActions({
   metadata,
+  isDm,
   connId,
   objectName,
   objectType,
@@ -206,10 +209,10 @@ export function useTableDataRowActions({
 
     const values: Array<{ columnName: string; value: unknown }> = [];
     for (const column of editableColumns) {
-      const value = (newRowValues[column.name] ?? '').trim();
+      const value = normalizeInsertInput(newRowValues[column.name], isDm);
       const nullable = column.nullable ?? true;
 
-      if (value === '' || value.toUpperCase() === 'NULL') {
+      if (value === null) {
         if (!nullable) {
           setInsertError(`Column ${column.name} is required`);
           return;
@@ -246,7 +249,7 @@ export function useTableDataRowActions({
     } finally {
       setInsertSubmitting(false);
     }
-  }, [catalog, columnMetadata, data, loadData, metadata.connectionId, newRowValues, objectName, pageSize, schema, t, toast]);
+  }, [catalog, columnMetadata, data, isDm, loadData, metadata.connectionId, newRowValues, objectName, pageSize, schema, t, toast]);
 
   const handleDeleteRow = useCallback(() => {
     if (isTransposeMode) {
@@ -367,26 +370,14 @@ export function useTableDataRowActions({
       }
     };
 
-    // Normalize the editor's string output: ''/'NULL' mean null (same convention as the
-    // insert bar), numeric columns get their number back instead of a string.
-    let newValue: unknown;
-    if (event.newValue == null) {
-      newValue = null;
-    } else {
-      const text = String(event.newValue);
-      if (text === '' || text.toUpperCase() === 'NULL') {
-        newValue = null;
-      } else if (typeof oldValue === 'number') {
-        const parsed = Number(text);
-        newValue = Number.isFinite(parsed) ? parsed : text;
-      } else {
-        newValue = text;
-      }
-    }
+    // DM preserves an entered empty string; explicit NULL remains a separate action.
+    // Other databases retain the existing empty-input convention.
+    const newValue = normalizeEditedCellInput(event.newValue, oldValue, isDm);
 
     // AG Grid compares with !==, so e.g. number 5 vs editor string "5" would fire
     // even though nothing really changed — skip those.
-    if (newValue === oldValue || formatCellValue(newValue) === formatCellValue(oldValue)) {
+    if (newValue === oldValue
+      || (typeof oldValue === 'number' && formatCellValue(newValue) === formatCellValue(oldValue))) {
       revert();
       return;
     }
@@ -464,7 +455,7 @@ export function useTableDataRowActions({
     } finally {
       pendingEditRef.current = false;
     }
-  }, [catalog, connId, currentPage, data, executeUpdate, isTable, isTransposeMode, loadData, objectName, schema, t, toast]);
+  }, [catalog, connId, currentPage, data, executeUpdate, isDm, isTable, isTransposeMode, loadData, objectName, schema, t, toast]);
 
   const handleConfirmUpdate = useCallback(async () => {
     if (!pendingUpdate) {

@@ -32,10 +32,10 @@ class DmIdentifierEscaperTest {
     }
 
     @Test
-    void quoteIdentifierLeavesSimpleIdentifierUnquoted() {
-        assertEquals("users", escaper.quoteIdentifier("users"));
-        assertEquals("SYSDBA", escaper.quoteIdentifier("SYSDBA"));
-        assertEquals("_id1", escaper.quoteIdentifier("_id1"));
+    void quoteIdentifierPreservesExactCaseForSimpleIdentifiers() {
+        assertEquals("\"users\"", escaper.quoteIdentifier("users"));
+        assertEquals("\"SYSDBA\"", escaper.quoteIdentifier("SYSDBA"));
+        assertEquals("\"_id1\"", escaper.quoteIdentifier("_id1"));
     }
 
     @Test
