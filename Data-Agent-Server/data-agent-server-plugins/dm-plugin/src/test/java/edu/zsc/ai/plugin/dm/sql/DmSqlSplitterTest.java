@@ -25,6 +25,12 @@ class DmSqlSplitterTest {
     }
 
     @Test
+    void keepsSemicolonInsideQuotedIdentifier() {
+        List<String> stmts = DmSqlSplitter.INSTANCE.split("SELECT \"a;b\" FROM T;");
+        assertEquals(List.of("SELECT \"a;b\" FROM T"), stmts);
+    }
+
+    @Test
     void plsqlCreateProcedureBlockWithSlashTerminatorIsSingleStatement() {
         String sql = "CREATE OR REPLACE PROCEDURE P AS BEGIN NULL; END;\n/\nSELECT 1;\nSELECT 2;";
         List<String> stmts = DmSqlSplitter.INSTANCE.split(sql);

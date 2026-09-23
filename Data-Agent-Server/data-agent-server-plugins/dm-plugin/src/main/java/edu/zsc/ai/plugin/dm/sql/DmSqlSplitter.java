@@ -39,6 +39,7 @@ public final class DmSqlSplitter implements SqlSplitter {
         List<String> statements = new ArrayList<>();
         StringBuilder current = new StringBuilder();
         boolean inSingleQuote = false;
+        boolean inDoubleQuote = false;
         boolean inLineComment = false;
         boolean inBlockComment = false;
         int statementKind = UNDECIDED;
@@ -81,6 +82,17 @@ public final class DmSqlSplitter implements SqlSplitter {
                 continue;
             }
 
+            if (inDoubleQuote) {
+                current.append(c);
+                if (c == '"' && next == '"') {
+                    current.append(next);
+                    i++;
+                } else if (c == '"') {
+                    inDoubleQuote = false;
+                }
+                continue;
+            }
+
             // Slash-alone line terminates a PL/SQL block (not part of the statement).
             if (statementKind == PLSQL && atLineStart && slashOnlyLine && c == '/') {
                 addStatement(statements, current);
@@ -116,6 +128,13 @@ public final class DmSqlSplitter implements SqlSplitter {
 
             if (c == '\'') {
                 inSingleQuote = true;
+                current.append(c);
+                slashOnlyLine = false;
+                continue;
+            }
+
+            if (c == '"') {
+                inDoubleQuote = true;
                 current.append(c);
                 slashOnlyLine = false;
                 continue;

@@ -34,6 +34,7 @@ public final class DmConnectionManager implements ConnectionManager {
 
     @Override
     public Connection connect(ConnectionConfig config) {
+        Connection connection = null;
         try {
             DriverLoader.loadDriver(config, driverClassNameSupplier.get());
 
@@ -44,7 +45,7 @@ public final class DmConnectionManager implements ConnectionManager {
             );
             Properties properties = connectionBuilder.buildProperties(config);
 
-            Connection connection = DriverManager.getConnection(jdbcUrl, properties);
+            connection = DriverManager.getConnection(jdbcUrl, properties);
             applyCurrentSchema(connection, config);
             logger.info(String.format(
                     "Successfully connected to DM database at %s:%d/%s",
@@ -54,6 +55,7 @@ public final class DmConnectionManager implements ConnectionManager {
             ));
             return connection;
         } catch (SQLException e) {
+            closeAfterInitializationFailure(connection, e);
             String errorMessage = String.format(
                     "Failed to connect to DM database at %s:%d/%s: %s",
                     config.getHost(),
@@ -64,14 +66,27 @@ public final class DmConnectionManager implements ConnectionManager {
             logger.severe(errorMessage);
             throw new RuntimeException(errorMessage, e);
         } catch (RuntimeException e) {
+            closeAfterInitializationFailure(connection, e);
             throw e;
         } catch (Exception e) {
+            closeAfterInitializationFailure(connection, e);
             String errorMessage = String.format(
                     "Unexpected error while connecting to DM database: %s",
                     e.getMessage()
             );
             logger.severe(errorMessage);
             throw new RuntimeException(errorMessage, e);
+        }
+    }
+
+    private void closeAfterInitializationFailure(Connection connection, Exception original) {
+        if (connection == null) {
+            return;
+        }
+        try {
+            connection.close();
+        } catch (SQLException closeException) {
+            original.addSuppressed(closeException);
         }
     }
 

@@ -6,7 +6,6 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Locale;
 
 import org.apache.commons.lang3.StringUtils;
 
@@ -35,13 +34,12 @@ public final class DmMetadataSupport {
     }
 
     /**
-     * Resolve the effective schema for dictionary queries: DM stores unquoted
-     * identifiers uppercase, so the result is always uppercased. Blank schema
-     * falls back to the connection's current schema (then current user).
+     * Resolve the effective schema for dictionary queries while preserving the
+     * database-reported spelling of quoted, case-sensitive identifiers.
      */
     public String resolveSchema(Connection connection, String schema) {
         if (StringUtils.isNotBlank(schema)) {
-            return schema.trim().toUpperCase(Locale.ROOT);
+            return schema.trim();
         }
         String current = null;
         try {
@@ -62,19 +60,18 @@ public final class DmMetadataSupport {
         if (StringUtils.isBlank(current)) {
             throw new IllegalArgumentException("Schema must not be blank for DM metadata operations");
         }
-        return current.trim().toUpperCase(Locale.ROOT);
+        return current.trim();
     }
 
     /**
-     * Get object DDL via DBMS_METADATA.GET_DDL. Names are uppercased because DM
-     * stores unquoted identifiers in uppercase.
+     * Get object DDL via DBMS_METADATA.GET_DDL using the exact metadata name.
      */
     public String getObjectDdl(Connection connection, String schema, String objectName,
                                String ddlSql, String objectType) {
         requireConnectionAndName(connection, objectName);
 
         String owner = resolveSchema(connection, schema);
-        String name = objectName.trim().toUpperCase(Locale.ROOT);
+        String name = objectName.trim();
 
         try (PreparedStatement statement = connection.prepareStatement(ddlSql)) {
             statement.setString(1, name);

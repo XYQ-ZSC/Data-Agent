@@ -82,37 +82,7 @@ public class DmValueProcessorFactory {
             return null;
         }
 
-        String baseTypeName = extractBaseTypeName(columnTypeName);
-
-        DmDataTypeEnum dataType = DmDataTypeEnum.fromTypeName(baseTypeName);
+        DmDataTypeEnum dataType = DmDataTypeEnum.fromTypeName(columnTypeName);
         return dataType != null ? PROCESSOR_MAP.get(dataType) : null;
-    }
-
-    /**
-     * Extract base type name from a full type definition.
-     *
-     * <p>Unlike MySQL (which cuts at the first space for UNSIGNED/ZEROFILL), DM
-     * type names may legitimately contain spaces ("TIMESTAMP WITH TIME ZONE"),
-     * so only a parenthesized size/precision suffix is stripped.
-     *
-     * Examples:
-     * - "NUMBER(10,2)" -> "NUMBER"
-     * - "VARCHAR2(200)" -> "VARCHAR2"
-     * - "TIMESTAMP WITH TIME ZONE" -> "TIMESTAMP WITH TIME ZONE"
-     *
-     * @param fullTypeName the full type name
-     * @return the base type name
-     */
-    private static String extractBaseTypeName(String fullTypeName) {
-        if (fullTypeName == null || fullTypeName.isEmpty()) {
-            return "";
-        }
-
-        int parenIndex = fullTypeName.indexOf('(');
-        if (parenIndex > 0) {
-            return fullTypeName.substring(0, parenIndex).trim();
-        }
-
-        return fullTypeName.trim();
     }
 }

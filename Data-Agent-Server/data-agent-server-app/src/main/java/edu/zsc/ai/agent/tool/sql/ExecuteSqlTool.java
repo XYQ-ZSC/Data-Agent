@@ -201,7 +201,9 @@ public class ExecuteSqlTool {
                 .orElse(null);
         SqlValidator validator = DefaultPluginManager.getInstance()
                 .getSqlValidatorByPluginId(Objects.nonNull(pluginId) ? pluginId : "");
-        return sqls.stream().allMatch(stmt -> validator.classifySql(stmt).isReadOnly());
+        return sqls.stream()
+                .map(validator::validate)
+                .allMatch(result -> result.valid() && result.sqlType().isReadOnly());
     }
 
     private void annotateSqlFailures(List<ExecuteSqlResponse> responses,

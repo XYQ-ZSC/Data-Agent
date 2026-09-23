@@ -20,8 +20,10 @@ public class DefaultSqlSplitter implements SqlSplitter {
 
         StringBuilder current = new StringBuilder();
         boolean inSingleQuote = false;
+        boolean inDoubleQuote = false;
         boolean inLineComment = false;
         boolean inBlockComment = false;
+        boolean proceduralBlock = beginsWithProceduralBlock(sql);
         int len = sql.length();
 
         for (int i = 0; i < len; i++) {
@@ -59,6 +61,17 @@ public class DefaultSqlSplitter implements SqlSplitter {
                 continue;
             }
 
+            if (inDoubleQuote) {
+                current.append(c);
+                if (c == '"' && next == '"') {
+                    current.append(next);
+                    i++;
+                } else if (c == '"') {
+                    inDoubleQuote = false;
+                }
+                continue;
+            }
+
             if (c == '-' && next == '-') {
                 inLineComment = true;
                 current.append(c);
@@ -77,7 +90,13 @@ public class DefaultSqlSplitter implements SqlSplitter {
                 continue;
             }
 
-            if (c == ';') {
+            if (c == '"') {
+                inDoubleQuote = true;
+                current.append(c);
+                continue;
+            }
+
+            if (c == ';' && !proceduralBlock) {
                 String stmt = current.toString().trim();
                 if (!stmt.isEmpty()) {
                     statements.add(stmt);
@@ -95,5 +114,21 @@ public class DefaultSqlSplitter implements SqlSplitter {
         }
 
         return statements;
+    }
+
+    private boolean beginsWithProceduralBlock(String sql) {
+        String remaining = sql.stripLeading();
+        while (!remaining.isEmpty()) {
+            if (remaining.startsWith("--")) {
+                int newline = remaining.indexOf('\n');
+                remaining = newline < 0 ? "" : remaining.substring(newline + 1).stripLeading();
+            } else if (remaining.startsWith("/*")) {
+                int end = remaining.indexOf("*/");
+                remaining = end < 0 ? "" : remaining.substring(end + 2).stripLeading();
+            } else {
+                break;
+            }
+        }
+        return remaining.matches("(?is)^(BEGIN|DECLARE)(?:\\s|$).*?");
     }
 }
