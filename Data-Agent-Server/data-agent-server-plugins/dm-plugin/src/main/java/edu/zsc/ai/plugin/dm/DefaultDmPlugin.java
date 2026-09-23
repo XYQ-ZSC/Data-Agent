@@ -33,7 +33,7 @@ import edu.zsc.ai.plugin.model.metadata.FunctionMetadata;
 import edu.zsc.ai.plugin.model.metadata.IndexMetadata;
 import edu.zsc.ai.plugin.model.metadata.ProcedureMetadata;
 import edu.zsc.ai.plugin.model.metadata.TriggerMetadata;
-import edu.zsc.ai.plugin.sql.DefaultSqlSplitter;
+import edu.zsc.ai.plugin.dm.sql.DmSqlSplitter;
 
 import java.sql.Connection;
 import java.sql.DatabaseMetaData;
@@ -177,7 +177,7 @@ public abstract class DefaultDmPlugin extends AbstractDatabasePlugin
 
     @Override
     public List<String> split(String sql) {
-        return DefaultSqlSplitter.INSTANCE.split(sql);
+        return DmSqlSplitter.INSTANCE.split(sql);
     }
 
     // ========== TableManager ==========
@@ -190,6 +190,12 @@ public abstract class DefaultDmPlugin extends AbstractDatabasePlugin
     @Override
     public void deleteTable(Connection connection, String catalog, String schema, String tableName) {
         tableManager.deleteTable(connection, catalog, schema, tableName);
+    }
+
+    @Override
+    public void renameTable(Connection connection, String catalog, String schema,
+                            String tableName, String newTableName) {
+        tableManager.renameTable(connection, catalog, schema, tableName, newTableName);
     }
 
     @Override

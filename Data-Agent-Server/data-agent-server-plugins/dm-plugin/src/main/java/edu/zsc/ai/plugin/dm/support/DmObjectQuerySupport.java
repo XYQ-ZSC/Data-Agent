@@ -4,6 +4,7 @@ import edu.zsc.ai.plugin.dm.constant.DmObjectSql;
 import edu.zsc.ai.plugin.model.metadata.ParameterInfo;
 import org.apache.commons.lang3.StringUtils;
 
+import java.sql.Clob;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
@@ -130,6 +131,15 @@ public final class DmObjectQuerySupport {
         Object ddl = rows.get(0).get("DDL");
         if (ddl == null) {
             throw new RuntimeException(String.format("Failed to get %s DDL for %s", objectType, objectName));
+        }
+        // DBMS_METADATA.GET_DDL returns an NClob; read its content instead of toString().
+        if (ddl instanceof Clob clob) {
+            try {
+                return clob.getSubString(1, (int) clob.length());
+            } catch (SQLException e) {
+                throw new RuntimeException(String.format(
+                        "Failed to read %s DDL for %s: %s", objectType, objectName, e.getMessage()), e);
+            }
         }
         return ddl.toString();
     }

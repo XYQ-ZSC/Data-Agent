@@ -21,6 +21,10 @@ public final class DmSqlTemplate {
     /** %s = full view name ("SCHEMA"."VIEW" or VIEW, escaped and quoted) */
     public static final String SQL_DROP_VIEW = "DROP VIEW %s";
 
+    // --- RENAME commands ---
+    /** %1$s = full table name ("SCHEMA"."TABLE"), %2$s = quoted new table name */
+    public static final String SQL_RENAME_TABLE = "ALTER TABLE %s RENAME TO %s";
+
     // --- Comments (Oracle compatible dictionary views) ---
     /** Parameters: 1 = owner schema (uppercase), 2 = table name (uppercase). */
     public static final String SQL_TABLE_COMMENT =
