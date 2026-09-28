@@ -18,14 +18,20 @@ interface ResultsPanelProps {
   isVisible: boolean;
   onClose: () => void;
   executeResult?: ExecuteSqlResponse | null;
+  scriptResults?: ExecuteSqlResponse[];
+  cancelStatus?: string | null;
   isRunning?: boolean;
   children: React.ReactNode;
 }
 
-export function ResultsPanel({ isVisible, onClose, executeResult, isRunning = false, children }: ResultsPanelProps) {
+export function ResultsPanel({ isVisible, onClose, executeResult: singleResult, scriptResults, cancelStatus, isRunning = false, children }: ResultsPanelProps) {
   const { t } = useTranslation();
   const toast = useToast();
   const [activeTab, setActiveTab] = useState<'result' | 'output'>('output');
+  const [selectedStatement, setSelectedStatement] = useState(0);
+  const executeResult = scriptResults?.[selectedStatement] ?? singleResult;
+
+  useEffect(() => setSelectedStatement(0), [scriptResults]);
 
   const primaryResultSet: ExecuteSqlResultSet | null | undefined =
     executeResult?.resultSet ??
@@ -72,6 +78,10 @@ export function ResultsPanel({ isVisible, onClose, executeResult, isRunning = fa
   const getStatusIndicatorColor = () => {
     if (isRunning) return 'bg-amber-500 animate-pulse';
     if (!executeResult) return 'bg-gray-500';
+    if (executeResult.statementState === 'UNKNOWN' || executeResult.batchState === 'UNKNOWN') return 'bg-amber-500';
+    if (executeResult.batchState === 'PARTIAL') return 'bg-amber-500';
+    if (executeResult.statementState === 'ROLLED_BACK' || executeResult.batchState === 'ROLLED_BACK') return 'bg-red-500';
+    if (executeResult.statementState === 'NOT_EXECUTED') return 'bg-gray-500';
     if (executeResult.success) return 'bg-green-500';
     return 'bg-red-500';
   };
@@ -79,7 +89,11 @@ export function ResultsPanel({ isVisible, onClose, executeResult, isRunning = fa
   const getStatusText = () => {
     if (isRunning) return 'Running...';
     if (!executeResult) return 'Ready';
-    if (!executeResult.success) return 'Error';
+    if (executeResult.statementState === 'UNKNOWN' || executeResult.batchState === 'UNKNOWN') return 'Outcome unknown';
+    if (executeResult.batchState === 'PARTIAL') return 'Partially applied';
+    if (executeResult.statementState === 'ROLLED_BACK') return 'Rolled back';
+    if (executeResult.statementState === 'NOT_EXECUTED') return 'Not executed';
+    if (!executeResult.success) return executeResult.statementState || 'Error';
     const duration = executeResult.executionInfo?.durationMs ?? executeResult.executionTimeMs;
     const fetched = executeResult.executionInfo?.fetchRows ?? resultRows.length;
     const affected = executeResult.executionInfo?.affectedRows ?? executeResult.affectedRows;
@@ -144,6 +158,20 @@ export function ResultsPanel({ isVisible, onClose, executeResult, isRunning = fa
       <Panel defaultSize="30%" minSize="15%" className="workbench-results-panel flex flex-col shrink-0 border-t theme-border relative">
         {/* Toolbar */}
         <div className="workbench-header flex h-11 items-center px-3 shrink-0">
+          {(scriptResults?.length ?? 0) > 1 && (
+            <select
+              aria-label="Script statement result"
+              value={selectedStatement}
+              onChange={event => setSelectedStatement(Number(event.target.value))}
+              className="workbench-pill mr-2 text-[10px]"
+            >
+              {scriptResults?.map((result, index) => (
+                <option key={index} value={index}>
+                  {index + 1}. {result.statementState ?? (result.success ? 'EXECUTED' : 'FAILED')}
+                </option>
+              ))}
+            </select>
+          )}
           <div className="flex space-x-1 h-full">
             {hasResultTab && (
               <button
@@ -275,10 +303,26 @@ export function ResultsPanel({ isVisible, onClose, executeResult, isRunning = fa
               {isRunning ? (
                 <div className="flex items-center space-x-2 text-amber-500">
                   <span className="animate-pulse">●</span>
-                  <span>Running...</span>
+                  <span>{cancelStatus || 'Running...'}</span>
                 </div>
               ) : executeResult ? (
                 <>
+                  {scriptResults && scriptResults.length > 0 && (
+                    <div className="mb-2 space-y-1">
+                      {scriptResults.map((result, index) => (
+                        <button key={index} type="button" onClick={() => setSelectedStatement(index)}
+                          className="block text-left theme-text-secondary hover:theme-text-primary">
+                          #{index + 1} {result.statementState ?? (result.success ? 'EXECUTED' : 'FAILED')}
+                          {result.transactionOutcome && result.transactionOutcome !== 'NONE'
+                            ? ` · ${result.transactionOutcome}` : ''}
+                          {result.errorMessage ? ` · ${result.errorMessage}` : ''}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                  {executeResult.executionInfo?.truncated && (
+                    <div className="text-amber-400">Result truncated at the configured row limit.</div>
+                  )}
                   {executeResult.success && (
                     <div className="theme-text-secondary">
                       [{formatTimestamp(executionStartTime)}] 已连接

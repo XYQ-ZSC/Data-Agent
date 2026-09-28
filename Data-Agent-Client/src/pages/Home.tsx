@@ -10,7 +10,7 @@ import { PlanConsole } from "../components/plan/PlanConsole";
 import { SubAgentConsole } from "../components/subagent/SubAgentConsole";
 import { useWorkspaceStore } from "../store/workspaceStore";
 import type { TableTabMetadata, PlanTabMetadata, SubAgentConsoleTabMetadata } from "../types/tab";
-import type { ExecuteSqlResponse, SqlSyntaxError } from "../types/sql";
+import type { ExecuteSqlResponse, SqlBatchMode, SqlSyntaxError } from "../types/sql";
 import { sqlExecutionService } from "../services/sqlExecution.service";
 import { sqlAnalysisService } from "../services/sqlAnalysis.service";
 import { connectionService } from "../services/connection.service";
@@ -24,6 +24,12 @@ export default function Home() {
     const { tabs, activeTabId, updateTabContent, updateTabMetadata } = useWorkspaceStore();
     const [isResultsVisible, setIsResultsVisible] = useState(false);
     const [executeResult, setExecuteResult] = useState<ExecuteSqlResponse | null>(null);
+    const [scriptResults, setScriptResults] = useState<ExecuteSqlResponse[]>([]);
+    const [scriptMode, setScriptMode] = useState<SqlBatchMode>('ATOMIC');
+    const [timeoutSeconds, setTimeoutSeconds] = useState(30);
+    const [maxRows, setMaxRows] = useState(10000);
+    const executionIdRef = useRef<string | null>(null);
+    const [cancelStatus, setCancelStatus] = useState<string | null>(null);
     const editorRef = useRef<MonacoEditorHandle | null>(null);
     const [isRunning, setIsRunning] = useState(false);
     const [connectionType, setConnectionType] = useState<{ id: number; dbType: string } | null>(null);
@@ -85,16 +91,27 @@ export default function Home() {
         if (!sql || !sqlContext?.connectionId) return;
 
         setIsRunning(true);
+        setCancelStatus(null);
+        const executionId = crypto.randomUUID();
+        executionIdRef.current = executionId;
         setExecuteResult(null);
+        setScriptResults([]);
         setIsResultsVisible(true);
 
         try {
-            const result = await sqlExecutionService.executeSql({
+            const results = await sqlExecutionService.executeScript({
                 connectionId: sqlContext.connectionId,
                 databaseName: sqlContext.databaseName ?? undefined,
                 schemaName: sqlContext.schemaName ?? undefined,
                 sql,
+                mode: scriptMode,
+                timeoutMs: timeoutSeconds * 1000,
+                maxRows,
+                executionId,
             });
+            setScriptResults(results);
+            const result = results[0];
+            if (!result) throw new Error('The script contained no executable statements');
             setExecuteResult({
                 ...result,
                 originalSql: result.originalSql || sql,
@@ -133,9 +150,27 @@ export default function Home() {
                 affectedRows: 0,
             });
         } finally {
+            executionIdRef.current = null;
             setIsRunning(false);
         }
-    }, [activeTab, connectionType, sqlContext]);
+    }, [activeTab, connectionType, sqlContext, scriptMode, timeoutSeconds, maxRows]);
+
+    const handleStop = useCallback(async () => {
+        if (!executionIdRef.current || !sqlContext?.connectionId) return;
+        try {
+            const outcome = await sqlExecutionService.cancelExecution({
+                connectionId: sqlContext.connectionId,
+                databaseName: sqlContext.databaseName,
+                schemaName: sqlContext.schemaName,
+                executionId: executionIdRef.current,
+            });
+            setCancelStatus(outcome === 'CANCEL_REQUESTED' ? 'Cancel requested; waiting for database confirmation'
+                : outcome === 'CANCEL_FAILED' ? 'Cancel request failed; query may still be running'
+                    : 'No active database statement to cancel');
+        } catch (error) {
+            setCancelStatus(`Cancel request failed: ${String(error)}`);
+        }
+    }, [sqlContext]);
 
     // SQL Editor Shortcuts
     useEffect(() => {
@@ -175,7 +210,9 @@ export default function Home() {
                     isVisible={isResultsVisible}
                     onClose={() => setIsResultsVisible(false)}
                     executeResult={executeResult}
+                    scriptResults={scriptResults}
                     isRunning={isRunning}
+                    cancelStatus={cancelStatus}
                 >
                     <div className="flex-1 flex flex-col min-h-0 relative bg-transparent">
                         {activeTab?.type === 'file' && (
@@ -183,8 +220,15 @@ export default function Home() {
                                 <Toolbar
                                     onRun={handleRunQuery}
                                     onFormat={connectionType && connectionType.id === sqlContext?.connectionId ? handleFormatSql : undefined}
-                                    onStop={() => setIsRunning(false)}
+                                    onStop={handleStop}
                                     isRunning={isRunning}
+                                    scriptMode={scriptMode}
+                                    onScriptModeChange={setScriptMode}
+                                    timeoutSeconds={timeoutSeconds}
+                                    onTimeoutSecondsChange={setTimeoutSeconds}
+                                    maxRows={maxRows}
+                                    onMaxRowsChange={setMaxRows}
+                                    showTransactionControls={connectionType?.dbType.toUpperCase() !== 'DM'}
                                     connectionId={sqlContext?.connectionId}
                                     currentDatabase={sqlContext?.databaseName}
                                     onDatabaseChange={(db) =>
