@@ -54,6 +54,10 @@ export function ExplorerNodeIcon({ node }: ExplorerNodeIconProps) {
       return <RoutineIcon letter={RoutineIconLetter.PROCEDURE} />;
     case ExplorerNodeType.TRIGGER:
       return <Zap className={`${ICON_CLASS} text-orange-400`} />;
+    case ExplorerNodeType.SEQUENCE:
+      return <Hash className={`${ICON_CLASS} text-cyan-400`} />;
+    case ExplorerNodeType.CONSTRAINT:
+      return <KeyRound className={`${ICON_CLASS} text-amber-400`} />;
     case ExplorerNodeType.COLUMN:
       return isPrimaryKey ? (
         <Key className={`${ICON_CLASS} text-amber-500`} />
@@ -91,6 +95,10 @@ function FolderIcon({ folderName }: { folderName?: string }) {
       return <FunctionSquare className={`${ICON_CLASS} text-violet-400`} />;
     case FolderName.TRIGGERS:
       return <Zap className={`${ICON_CLASS} text-orange-400`} />;
+    case FolderName.SEQUENCES:
+      return <Hash className={`${ICON_CLASS} text-cyan-400`} />;
+    case FolderName.CONSTRAINTS:
+      return <KeyRound className={`${ICON_CLASS} text-amber-400`} />;
     default:
       return <Folder className={`${ICON_CLASS} text-gray-400`} />;
   }

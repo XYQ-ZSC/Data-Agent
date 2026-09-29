@@ -4,6 +4,7 @@ import { viewService } from '../services/view.service';
 import { functionService } from '../services/function.service';
 import { procedureService } from '../services/procedure.service';
 import { triggerService } from '../services/trigger.service';
+import type { SequenceMetadata } from '../services/sequence.service';
 import {
   ExplorerNodeType,
   FolderName,
@@ -32,6 +33,8 @@ const FOLDER_I18N: Record<FolderName, string> = {
   [FolderName.VIEWS]: ExplorerI18nKeys.FOLDER_VIEWS,
   [FolderName.ROUTINES]: ExplorerI18nKeys.FOLDER_ROUTINES,
   [FolderName.TRIGGERS]: ExplorerI18nKeys.FOLDER_TRIGGERS,
+  [FolderName.SEQUENCES]: ExplorerI18nKeys.FOLDER_SEQUENCES,
+  [FolderName.CONSTRAINTS]: ExplorerI18nKeys.FOLDER_CONSTRAINTS,
   [FolderName.COLUMNS]: ExplorerI18nKeys.FOLDER_COLUMNS,
   [FolderName.KEYS]: ExplorerI18nKeys.FOLDER_KEYS,
   [FolderName.INDEXES]: ExplorerI18nKeys.FOLDER_INDEXES,
@@ -79,7 +82,8 @@ export function createCachedObjectFolders(
   views: string[],
   functions: FunctionMetadata[] = [],
   procedures: ProcedureMetadata[] = [],
-  triggers: TriggerMetadata[] = []
+  triggers: TriggerMetadata[] = [],
+  sequences: SequenceMetadata[] = []
 ): ExplorerNode[] {
   const folders: ExplorerNode[] = [];
   if (tables.length > 0) {
@@ -134,6 +138,12 @@ export function createCachedObjectFolders(
       )
     );
   }
+  if (ctx.isDm) {
+    folders.push(createFolderWithChildren(
+      ctx.parentId, FolderName.SEQUENCES, ctx.connId, ctx.catalog, ctx.schema, ctx.t,
+      toSequenceNodes(ctx, sequences)
+    ));
+  }
   return folders;
 }
 
@@ -161,6 +171,7 @@ type DbSchemaContext = {
   t: (key: string) => string;
   queryClient?: QueryClient;
   force?: boolean;
+  isDm?: boolean;
 };
 
 function folderId(ctx: DbSchemaContext, fn: FolderName) {
@@ -231,6 +242,18 @@ function toTriggerNodes(ctx: DbSchemaContext, triggers: TriggerMetadata[]): Expl
     catalog: ctx.catalog,
     schema: ctx.schema,
     objectName: tr.name,
+  }));
+}
+
+function toSequenceNodes(ctx: DbSchemaContext, sequences: SequenceMetadata[]): ExplorerNode[] {
+  const prefix = folderId(ctx, FolderName.SEQUENCES);
+  return sequences.map((sequence) => ({
+    id: `${prefix}${ExplorerIdPrefix.SEQUENCE}${sequence.name}`,
+    name: sequence.name,
+    type: ExplorerNodeType.SEQUENCE,
+    connectionId: ctx.connId,
+    catalog: ctx.catalog,
+    schema: ctx.schema,
   }));
 }
 

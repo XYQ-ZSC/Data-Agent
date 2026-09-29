@@ -248,6 +248,8 @@ export const I18N_KEYS = {
     DELETE_FUNCTION: 'explorer.delete_function',
     DELETE_PROCEDURE: 'explorer.delete_procedure',
     DELETE_TRIGGER: 'explorer.delete_trigger',
+    DELETE_SEQUENCE: 'explorer.delete_sequence',
+    DELETE_CONSTRAINT: 'explorer.delete_constraint',
     DELETE_DATABASE: 'explorer.delete_database',
     DELETE_ALL_IN_FOLDER: 'explorer.delete_all_in_folder',
     LOAD_TABLE_DATA_FAILED: 'explorer.load_table_data_failed',

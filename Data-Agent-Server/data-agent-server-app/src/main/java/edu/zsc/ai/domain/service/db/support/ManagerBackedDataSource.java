@@ -87,6 +87,7 @@ public final class ManagerBackedDataSource implements DataSource {
         target.setPassword(source.getPassword());
         target.setDriverJarPath(source.getDriverJarPath());
         target.setTimeout(source.getTimeout());
+        target.setNetworkTimeoutMs(source.getNetworkTimeoutMs());
         if (source.getProperties() != null) {
             target.setProperties(new HashMap<>(source.getProperties()));
         }

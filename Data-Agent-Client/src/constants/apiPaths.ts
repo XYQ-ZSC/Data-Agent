@@ -17,6 +17,10 @@ export const ApiPaths = {
   PROCEDURES_DDL: '/procedures/ddl',
   TRIGGERS: '/triggers',
   TRIGGERS_DDL: '/triggers/ddl',
+  SEQUENCES: '/sequences',
+  SEQUENCES_DDL: '/sequences/ddl',
+  CONSTRAINTS: '/constraints',
+  CONSTRAINTS_DDL: '/constraints/ddl',
   INDEXES: '/indexes',
   PRIMARY_KEYS: '/primary-keys',
 } as const;

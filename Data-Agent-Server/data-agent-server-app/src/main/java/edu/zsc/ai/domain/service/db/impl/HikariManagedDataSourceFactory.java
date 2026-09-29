@@ -7,6 +7,7 @@ import edu.zsc.ai.domain.service.db.ManagedDataSourceFactory;
 import edu.zsc.ai.domain.service.db.support.ManagerBackedDataSource;
 import edu.zsc.ai.plugin.capability.ConnectionManager;
 import edu.zsc.ai.plugin.connection.ConnectionConfig;
+import edu.zsc.ai.plugin.connection.ConnectionFailureException;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
@@ -43,11 +44,23 @@ public class HikariManagedDataSourceFactory implements ManagedDataSourceFactory 
             hikariConfig.setTransactionIsolation(connectionPoolProperties.getTransactionIsolation());
         }
 
-        HikariDataSource dataSource = new HikariDataSource(hikariConfig);
-        try (Connection ignored = dataSource.getConnection()) {
-            return dataSource;
+        HikariDataSource dataSource = null;
+        try {
+            dataSource = new HikariDataSource(hikariConfig);
+            try (Connection ignored = dataSource.getConnection()) {
+                return dataSource;
+            }
         } catch (Exception e) {
-            dataSource.close();
+            if (dataSource != null) {
+                dataSource.close();
+            }
+            Throwable cause = e;
+            while (cause != null) {
+                if (cause instanceof ConnectionFailureException failure) {
+                    throw failure;
+                }
+                cause = cause.getCause();
+            }
             throw new RuntimeException("Failed to initialize pooled data source: " + e.getMessage(), e);
         }
     }

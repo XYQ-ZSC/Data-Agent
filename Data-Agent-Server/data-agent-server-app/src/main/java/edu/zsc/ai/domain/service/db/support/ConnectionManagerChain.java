@@ -44,6 +44,9 @@ public final class ConnectionManagerChain<R> {
                 failures.add(e);
             }
         }
+        if (failures.size() == 1) {
+            throw failures.get(0);
+        }
         ConnectionFailureException aggregate = new ConnectionFailureException(
                 ConnectionFailureException.Category.UNKNOWN,
                 String.format("All %d connection manager attempt(s) failed", failures.size()),
