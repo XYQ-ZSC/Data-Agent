@@ -69,4 +69,7 @@ export const SqlPaths = {
   EXECUTE_SCRIPT: '/db/sql/execute-script',
   CANCEL: '/db/sql/cancel',
   ANALYZE: '/db/sql/analyze',
+  COMPLETE: '/db/sql/complete',
+  COMPLETION_DICTIONARY: '/db/sql/completion-dictionary',
+  COMPLETION_INVALIDATE: '/db/sql/completion-invalidate',
 } as const;

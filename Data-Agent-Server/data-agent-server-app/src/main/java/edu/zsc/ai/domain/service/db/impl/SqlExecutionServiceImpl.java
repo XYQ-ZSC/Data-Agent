@@ -44,6 +44,7 @@ public class SqlExecutionServiceImpl implements SqlExecutionService {
 
     private final ConnectionService connectionService;
     private final ConnectionAccessService connectionAccessService;
+    private final SqlCompletionMetadataCache completionCache;
     private final ConcurrentHashMap<String, ExecutionOwner> executions = new ConcurrentHashMap<>();
 
     private record ExecutionOwner(Long userId, WorkspaceTypeEnum workspaceType, Long orgId,
@@ -82,6 +83,9 @@ public class SqlExecutionServiceImpl implements SqlExecutionService {
         }
 
         ExecuteSqlResponse response = SqlExecutionConverter.toResponse(result);
+        if (result != null && result.isSuccess() && isDdl(validator, sql)) {
+            completionCache.invalidate(db.connectionId());
+        }
         if (response != null) {
             response.setDatabaseName(db.catalog());
             response.setSchemaName(db.schema());
@@ -136,6 +140,13 @@ public class SqlExecutionServiceImpl implements SqlExecutionService {
                     : executeAtomic(connection, executor, validator, db, sqls, options);
         } finally {
             unregisterExecution(options.executionId());
+        }
+        for (int i = 0; i < batch.getResults().size(); i++) {
+            SqlCommandResult result = batch.getResults().get(i);
+            if (result.isSuccess() && isDdl(validator, sqls.get(i))) {
+                completionCache.invalidate(db.connectionId());
+                break;
+            }
         }
         return toResponses(batch, db);
     }

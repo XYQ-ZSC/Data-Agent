@@ -117,7 +117,7 @@ export default function Home() {
                 originalSql: result.originalSql || sql,
                 executedSql: result.executedSql || sql,
             });
-            if (result.success && connectionType?.id === sqlContext.connectionId
+            if (results.some(item => item.success) && connectionType?.id === sqlContext.connectionId
                 && connectionType.dbType.toUpperCase() === 'DM') {
                 sqlAnalysisService.analyze({
                     connectionId: sqlContext.connectionId,
@@ -125,17 +125,18 @@ export default function Home() {
                     schemaName: sqlContext.schemaName,
                     sql,
                 }).then(analysis => {
-                    if (analysis.errors.length || analysis.statements.length !== 1) return;
-                    const statement = analysis.statements[0];
-                    if (['CREATE', 'ALTER', 'DROP'].includes(statement.type) && statement.objectType) {
-                        window.dispatchEvent(new CustomEvent(EXPLORER_SQL_OBJECT_CHANGED, {
-                            detail: {
-                                connectionId: sqlContext.connectionId,
-                                catalog: sqlContext.databaseName,
-                                schema: sqlContext.schemaName,
-                                objectType: statement.objectType,
-                            },
-                        }));
+                    if (analysis.errors.length) return;
+                    for (const [index, statement] of analysis.statements.entries()) {
+                        if (results[index]?.success && ['CREATE', 'ALTER', 'DROP', 'TRUNCATE'].includes(statement.type) && statement.objectType) {
+                            window.dispatchEvent(new CustomEvent(EXPLORER_SQL_OBJECT_CHANGED, {
+                                detail: {
+                                    connectionId: sqlContext.connectionId,
+                                    catalog: sqlContext.databaseName,
+                                    schema: sqlContext.schemaName,
+                                    objectType: statement.objectType,
+                                },
+                            }));
+                        }
                     }
                 }).catch(() => undefined);
             }
@@ -245,6 +246,11 @@ export default function Home() {
                                         ref={editorRef}
                                         value={activeTab.content || ''}
                                         diagnostics={diagnostics}
+                                        completionContext={{
+                                            connectionId: sqlContext?.connectionId,
+                                            databaseName: sqlContext?.databaseName,
+                                            schemaName: sqlContext?.schemaName,
+                                        }}
                                         onChange={(val) => updateTabContent(activeTab.id, val || '')}
                                     />
                                 ) : activeTab?.type === 'table' && activeTab.metadata ? (

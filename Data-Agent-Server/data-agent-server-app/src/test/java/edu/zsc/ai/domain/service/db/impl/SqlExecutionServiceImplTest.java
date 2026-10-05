@@ -430,11 +430,59 @@ class SqlExecutionServiceImplTest {
         verify(context.executor, never()).executeCommand(any());
     }
 
+    @Test
+    void successfulDdlInvalidatesCompletionMetadata() throws Exception {
+        TestContext context = context();
+        when(context.validator.classifySql("ALTER TABLE T ADD C INT")).thenReturn(SqlType.ALTER);
+        when(context.executor.executeCommand(any())).thenReturn(result(true, null));
+        try (MockedStatic<ActiveConnectionRegistry> registry = mockStatic(ActiveConnectionRegistry.class);
+             MockedStatic<DefaultPluginManager> plugins = mockStatic(DefaultPluginManager.class)) {
+            registry.when(() -> ActiveConnectionRegistry.getOwnedConnection(context.db)).thenReturn(context.active);
+            plugins.when(DefaultPluginManager::getInstance).thenReturn(context.pluginManager);
+            context.service.executeSql(AgentExecuteSqlRequest.builder().connectionId(context.db.connectionId())
+                    .catalog(context.db.catalog()).schema(context.db.schema()).sql("ALTER TABLE T ADD C INT").build());
+        }
+        verify(context.completionCache).invalidate(1L);
+    }
+
+    @Test
+    void failedDdlDoesNotInvalidateCompletionMetadata() throws Exception {
+        TestContext context = context();
+        when(context.validator.classifySql("CREATE TABLE T(ID INT)")).thenReturn(SqlType.CREATE);
+        when(context.executor.executeCommand(any())).thenReturn(failedResult("denied"));
+        try (MockedStatic<ActiveConnectionRegistry> registry = mockStatic(ActiveConnectionRegistry.class);
+             MockedStatic<DefaultPluginManager> plugins = mockStatic(DefaultPluginManager.class)) {
+            registry.when(() -> ActiveConnectionRegistry.getOwnedConnection(context.db)).thenReturn(context.active);
+            plugins.when(DefaultPluginManager::getInstance).thenReturn(context.pluginManager);
+            context.service.executeSql(AgentExecuteSqlRequest.builder().connectionId(context.db.connectionId())
+                    .catalog(context.db.catalog()).schema(context.db.schema()).sql("CREATE TABLE T(ID INT)").build());
+        }
+        verify(context.completionCache, never()).invalidate(any());
+    }
+
+    @Test
+    void partialStepwiseBatchInvalidatesWhenLaterDdlSucceeded() throws Exception {
+        TestContext context = context();
+        when(context.validator.classifySql("BAD SQL")).thenReturn(SqlType.UNKNOWN);
+        when(context.validator.classifySql("CREATE TABLE T(ID INT)")).thenReturn(SqlType.CREATE);
+        SqlCommandResult ddl = result(true, null);
+        ddl.setStatementState(StatementExecutionState.COMMITTED);
+        when(context.executor.executeCommand(any())).thenReturn(failedResult("bad SQL"), ddl);
+        try (MockedStatic<ActiveConnectionRegistry> registry = mockStatic(ActiveConnectionRegistry.class);
+             MockedStatic<DefaultPluginManager> plugins = mockStatic(DefaultPluginManager.class)) {
+            registry.when(() -> ActiveConnectionRegistry.getOwnedConnection(context.db)).thenReturn(context.active);
+            plugins.when(DefaultPluginManager::getInstance).thenReturn(context.pluginManager);
+            context.service.executeBatchSql(context.db, List.of("BAD SQL", "CREATE TABLE T(ID INT)"), BatchMode.STEPWISE);
+        }
+        verify(context.completionCache).invalidate(1L);
+    }
+
     @SuppressWarnings("unchecked")
     private TestContext context() throws Exception {
         ConnectionService connectionService = mock(ConnectionService.class);
         ConnectionAccessService accessService = mock(ConnectionAccessService.class);
-        SqlExecutionServiceImpl service = new SqlExecutionServiceImpl(connectionService, accessService);
+        SqlCompletionMetadataCache completionCache = mock(SqlCompletionMetadataCache.class);
+        SqlExecutionServiceImpl service = new SqlExecutionServiceImpl(connectionService, accessService, completionCache);
         DbContext db = new DbContext(1L, "DB", "SCHEMA");
         Connection connection = mock(Connection.class);
         ActiveConnectionRegistry.ActiveConnection active = mock(ActiveConnectionRegistry.ActiveConnection.class);
@@ -453,7 +501,7 @@ class SqlExecutionServiceImplTest {
         DefaultPluginManager pluginManager = mock(DefaultPluginManager.class);
         when(pluginManager.getSqlCommandExecutorByPluginId("test-plugin")).thenReturn(executor);
         when(pluginManager.getSqlValidatorByPluginId("test-plugin")).thenReturn(validator);
-        return new TestContext(service, db, connection, active, executor, validator, pluginManager);
+        return new TestContext(service, db, connection, active, executor, validator, pluginManager, completionCache);
     }
 
     private SqlCommandResult result(boolean success, String error) {
@@ -477,6 +525,7 @@ class SqlExecutionServiceImplTest {
             ActiveConnectionRegistry.ActiveConnection active,
             CommandExecutor<SqlCommandRequest, SqlCommandResult> executor,
             SqlValidator validator,
-            DefaultPluginManager pluginManager) {
+            DefaultPluginManager pluginManager,
+            SqlCompletionMetadataCache completionCache) {
     }
 }

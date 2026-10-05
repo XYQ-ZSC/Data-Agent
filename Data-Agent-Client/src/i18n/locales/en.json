@@ -916,5 +916,27 @@
     "needs_review": "Needs Review",
     "manual": "Manual",
     "agent": "Agent"
+  },
+  "sql_completion": {
+    "types": {
+      "keyword": "Keyword",
+      "function": "Function",
+      "procedure": "Procedure",
+      "schema": "Schema",
+      "table": "Table",
+      "view": "View",
+      "column": "Column",
+      "alias": "Alias",
+      "snippet": "SQL template",
+      "all_columns": "All columns",
+      "join": "JOIN condition"
+    },
+    "templates": {
+      "sel": "Select data from a table",
+      "selc": "Select data from a table with a condition",
+      "ins": "Insert data into a table",
+      "upd": "Update data in a table",
+      "del": "Delete data from a table"
+    }
   }
 }

@@ -12,6 +12,8 @@ import edu.zsc.ai.plugin.capability.IndexManager;
 import edu.zsc.ai.plugin.capability.ProcedureManager;
 import edu.zsc.ai.plugin.capability.SchemaManager;
 import edu.zsc.ai.plugin.capability.SequenceManager;
+import edu.zsc.ai.plugin.capability.SqlCompleter;
+import edu.zsc.ai.plugin.capability.SqlIdentifierEscaper;
 import edu.zsc.ai.plugin.capability.SqlSplitter;
 import edu.zsc.ai.plugin.capability.SqlAnalyzer;
 import edu.zsc.ai.plugin.capability.SqlValidator;
@@ -286,6 +288,33 @@ public class DefaultPluginManager implements PluginManager {
     @Override
     public SqlAnalyzer getSqlAnalyzerByPluginId(@NotBlank String pluginId) {
         return PluginCapabilityResolver.getManagerByPluginId(pluginMap, pluginId, SqlAnalyzer.class);
+    }
+
+    @Override
+    public SqlCompleter getSqlCompleterByPluginId(@NotBlank String pluginId) {
+        Plugin plugin = pluginMap.get(pluginId);
+        if (plugin == null) {
+            throw new IllegalArgumentException("No plugin found with ID: " + pluginId);
+        }
+        return (plugin instanceof SqlCompleter completer) ? completer : null;
+    }
+
+    @Override
+    public boolean supportsSqlCompletionByPluginId(@NotBlank String pluginId) {
+        return pluginMap.get(pluginId) instanceof SqlCompleter;
+    }
+
+    /**
+     * Identifier escaper exposed by the plugin, or a no-op default
+     * implementation when the plugin does not provide one.
+     */
+    public SqlIdentifierEscaper getSqlIdentifierEscaperByPluginId(@NotBlank String pluginId) {
+        Plugin plugin = pluginMap.get(pluginId);
+        if (plugin == null) {
+            throw new IllegalArgumentException("No plugin found with ID: " + pluginId);
+        }
+        return (plugin instanceof SqlIdentifierEscaper escaper) ? escaper : new SqlIdentifierEscaper() {
+        };
     }
 
     public boolean supportsSchemaByPluginId(@NotBlank String pluginId) {

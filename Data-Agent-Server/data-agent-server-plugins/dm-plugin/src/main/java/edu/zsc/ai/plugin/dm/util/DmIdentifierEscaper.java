@@ -44,6 +44,21 @@ public class DmIdentifierEscaper implements SqlIdentifierEscaper {
         return DOUBLE_QUOTE + escapeIdentifier(identifier) + DOUBLE_QUOTE;
     }
 
+    public String completionIdentifier(String name, boolean quoted, java.util.Set<String> reserved) {
+        if (name == null || name.isEmpty()) {
+            return name;
+        }
+        int first = name.codePointAt(0);
+        boolean regular = Character.isLetter(first) || first == '_' || first == '$' || first == '#';
+        regular &= name.codePoints().allMatch(c -> Character.isLetterOrDigit(c)
+                || c == '_' || c == '$' || c == '#');
+        if (!quoted && regular && name.equals(name.toUpperCase(java.util.Locale.ROOT))
+                && !reserved.contains(name)) {
+            return name;
+        }
+        return quoteIdentifier(name);
+    }
+
     /**
      * DM string literals only escape the single quote by doubling it;
      * backslash has no special meaning (Oracle compatible).

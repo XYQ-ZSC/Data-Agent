@@ -51,6 +51,36 @@ export interface SqlScriptAnalysis {
   errors: SqlSyntaxError[];
 }
 
+/** SQL completion, returned from backend /api/db/sql/complete */
+export type SqlCompletionKind = 'KEYWORD' | 'FUNCTION' | 'PROCEDURE' | 'SCHEMA' | 'TABLE' | 'VIEW' | 'COLUMN' | 'ALIAS' | 'SNIPPET' | 'ALL_COLUMNS' | 'JOIN';
+
+export interface SqlCompletionItem {
+  label: string;
+  kind: SqlCompletionKind;
+  insertText: string;
+  detail?: string | null;
+  replaceStart: number;
+  replaceEnd: number;
+  source?: string | null;
+  filterText: string;
+  rank: number;
+  documentation?: string | null;
+  snippet: boolean;
+}
+
+export interface SqlCompletionResponse {
+  items: SqlCompletionItem[];
+  incomplete: boolean;
+}
+
+export interface SqlCompletionParams {
+  connectionId: number;
+  databaseName?: string | null;
+  schemaName?: string | null;
+  sql: string;
+  cursorOffset: number;
+}
+
 /**
  * SQL Execution Response
  * Returned from backend /api/db/sql/execute
