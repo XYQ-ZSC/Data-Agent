@@ -22,7 +22,7 @@ import { EXPLORER_SQL_OBJECT_CHANGED } from "../constants/explorer";
 
 export default function Home() {
     const { t } = useTranslation();
-    const { tabs, activeTabId, updateTabContent, updateTabMetadata } = useWorkspaceStore();
+    const { tabs, activeTabId, updateTabContent, updateTabMetadata, supportedDbTypes } = useWorkspaceStore();
     const [isResultsVisible, setIsResultsVisible] = useState(false);
     const [executeResult, setExecuteResult] = useState<ExecuteSqlResponse | null>(null);
     const editorRef = useRef<MonacoEditorHandle | null>(null);
@@ -31,6 +31,12 @@ export default function Home() {
     const [diagnostics, setDiagnostics] = useState<SqlSyntaxError[]>([]);
 
     const activeTab = tabs.find(t => t.id === activeTabId);
+    const completionDbType = connectionType?.id === (activeTab?.metadata as { connectionId?: number } | undefined)?.connectionId
+        ? connectionType?.dbType
+        : (activeTab?.metadata as { dbType?: string } | undefined)?.dbType;
+    const completionQuoteStyle = supportedDbTypes.find(
+        (typeOption) => typeOption.code.toLowerCase() === (completionDbType ?? '').toLowerCase(),
+    )?.identifierQuoteStyle;
     const isSpecialTab = activeTab?.type === 'plan' || activeTab?.type === 'subagent-console' || activeTab?.type === 'er';
     const sqlContext = !isSpecialTab
         ? activeTab?.metadata as import('../types/tab').ConsoleTabMetadata | undefined
@@ -206,6 +212,13 @@ export default function Home() {
                                         ref={editorRef}
                                         value={activeTab.content || ''}
                                         diagnostics={diagnostics}
+                                        completion={{
+                                            connectionId: sqlContext?.connectionId,
+                                            catalog: sqlContext?.databaseName,
+                                            schema: sqlContext?.schemaName,
+                                            dbType: completionDbType,
+                                            quoteStyle: completionQuoteStyle,
+                                        }}
                                         onChange={(val) => updateTabContent(activeTab.id, val || '')}
                                     />
                                 ) : activeTab?.type === 'table' && activeTab.metadata ? (
