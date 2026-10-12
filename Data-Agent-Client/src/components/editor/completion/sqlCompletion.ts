@@ -58,6 +58,8 @@ export function staticCompletions(dictionary: SqlCompletionItem[], sql: string, 
   const last = tokens[tokens.length - 1];
   if (word.suppressed || word.quoted || last === '.' || ['FROM', 'JOIN', 'INTO', 'UPDATE', 'USING', 'TABLE', 'CALL', 'EXECUTE', 'PROCEDURE'].includes(last ?? '')) return empty();
   const statement = tokens.length === 0;
+  const statementKeywords = new Set(['SELECT', 'INSERT', 'UPDATE', 'DELETE', 'MERGE', 'WITH', 'CREATE', 'ALTER', 'DROP',
+    'TRUNCATE', 'CALL', 'EXECUTE', 'COMMIT', 'ROLLBACK', 'SAVEPOINT', 'GRANT', 'REVOKE', 'EXPLAIN', 'DECLARE', 'BEGIN']);
   let clause = '';
   const clauses: string[] = [];
   for (const value of tokens) {
@@ -67,7 +69,11 @@ export function staticCompletions(dictionary: SqlCompletionItem[], sql: string, 
   }
   const functionOnly = last === 'FUNCTION';
   if (!statement && !functionOnly && !['SELECT', 'WHERE', 'ON', 'HAVING', 'SET', 'VALUES', 'GROUP', 'ORDER'].includes(clause)) return empty();
+  const expressionStart = ['SELECT', 'DISTINCT', 'ALL', 'WHERE', 'ON', 'HAVING', 'BY', 'AND', 'OR', 'NOT', 'WHEN', 'THEN',
+    'ELSE', 'SET', 'VALUES', 'BETWEEN', 'LIKE', 'IN', 'IS', 'RETURN', 'IF', 'ELSIF', 'WHILE', '(', ',', '=', '>', '<', '+', '-', '*', '/', ':'].includes(last ?? '');
   return { items: dictionary.filter(item => (statement || item.kind !== 'SNIPPET') && (!functionOnly || item.kind === 'FUNCTION')
+    && (item.kind === 'KEYWORD' ? statement && statementKeywords.has(item.label.toUpperCase())
+      : item.kind === 'FUNCTION' ? !statement && (functionOnly || expressionStart) : true)
     && item.filterText.toLowerCase().startsWith(word.prefix.toLowerCase()))
     .map(item => ({ ...item, replaceStart: word.start, replaceEnd: word.end,
       insertText: item.kind === 'FUNCTION' && /^\s*\(/.test(sql.slice(word.end)) ? item.label : item.insertText,
@@ -78,6 +84,7 @@ export function staticCompletions(dictionary: SqlCompletionItem[], sql: string, 
 export class SqlCompletionSession {
   private active?: AbortController;
   private sequence = 0;
+  private failedSequence = -1;
   private snapshot?: { key: string; result: SqlCompletionResponse; expires: number };
   private cache = new Map<string, { prefix: string; result: SqlCompletionResponse; expires: number }>();
   constructor(private transport: CompletionTransport, private delayMs = 120) {}
@@ -95,8 +102,9 @@ export class SqlCompletionSession {
     const sequence = this.sequence;
     void pending.then(result => {
       if (sequence !== this.sequence || token.isCancellationRequested || !isCurrent()) return;
-      this.snapshot = { key, result: result.items.length ? result : local, expires: Date.now() + 10_000 };
-      if (result.items.length) onReady();
+      const failed = this.failedSequence === sequence;
+      this.snapshot = { key, result: failed ? local : result, expires: Date.now() + 10_000 };
+      if (!failed) onReady();
     });
     return Promise.resolve({ ...local, incomplete: true });
   }
@@ -133,7 +141,7 @@ export class SqlCompletionSession {
       }
       if (this.cache.size > 40) this.cache.delete(this.cache.keys().next().value!);
       return result;
-    } catch { return empty(); }
+    } catch { if (sequence === this.sequence) this.failedSequence = sequence; return empty(); }
     finally { subscription.dispose(); if (this.active === controller) this.active = undefined; }
   }
 }

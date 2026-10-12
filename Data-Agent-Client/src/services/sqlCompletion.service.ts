@@ -13,8 +13,12 @@ export const sqlCompletionService = {
     }, { signal });
     return response.data;
   },
-  dictionary: async (connectionId: number, signal?: AbortSignal): Promise<SqlCompletionResponse> => {
-    const response = await http.get<SqlCompletionResponse>(SqlPaths.COMPLETION_DICTIONARY, { params: { connectionId }, signal });
+  dictionary: async (connectionId: number, signal?: AbortSignal,
+    context?: { databaseName?: string | null; schemaName?: string | null; resolveEnvironment?: boolean }): Promise<SqlCompletionResponse> => {
+    const response = await http.get<SqlCompletionResponse>(SqlPaths.COMPLETION_DICTIONARY, {
+      params: { connectionId, catalog: context?.databaseName || undefined, schema: context?.schemaName || undefined,
+        resolveEnvironment: context?.resolveEnvironment ?? false }, signal,
+    });
     return response.data;
   },
   invalidate: async (connectionId: number) => {

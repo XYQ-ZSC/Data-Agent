@@ -45,10 +45,19 @@ describe('replacement and static dictionary', () => {
   it('inserts a template at statement start and excludes it inside expressions', () => {
     const dictionary = [item('sel', { kind: 'SNIPPET', snippet: true }), item('SELECT', { kind: 'KEYWORD' })];
     expect(staticCompletions(dictionary, 'se', 2).items).toHaveLength(2);
-    expect(staticCompletions(dictionary, 'SELECT se', 9).items.map(i => i.label)).toEqual(['SELECT']);
+    expect(staticCompletions(dictionary, 'SELECT se', 9).items).toEqual([]);
     expect(staticCompletions(dictionary, 'SELECT * FROM ', 14).items).toEqual([]);
     expect(staticCompletions(dictionary, 'SELECT * FROM EMPLOYEE, ', 24).items).toEqual([]);
     expect(staticCompletions(dictionary, 'SELECT e.', 9).items).toEqual([]);
+  });
+  it('leaves clause keywords to the backend and restricts local functions to expressions', () => {
+    const dictionary = [item('CREATE',{kind:'KEYWORD'}),item('WHERE',{kind:'KEYWORD'}),item('UPPER',{kind:'FUNCTION'}),item('SELECT',{kind:'KEYWORD'})];
+    expect(staticCompletions(dictionary,'',0).items.map(i => i.label)).toEqual(['CREATE','SELECT']);
+    expect(staticCompletions(dictionary,'SELECT UP',9).items.map(i => i.label)).toEqual(['UPPER']);
+    const order='SELECT * FROM EMPLOYEE ORDER BY ID ';
+    expect(staticCompletions(dictionary,order,order.length).items).toEqual([]);
+    const from='SELECT * FROM EMPLOYEE ';
+    expect(staticCompletions(dictionary,from,from.length).items).toEqual([]);
   });
   it('does not add a second function argument list', () => {
     const sql = 'SELECT NVL()';
@@ -95,6 +104,23 @@ describe('remote session', () => {
     await session.progressive(params(), cancellation, () => true, 'editor', response([item('SELECT')]), ready);
     await vi.runAllTimersAsync(); cancellation.cancel(); resolve(response()); await vi.runAllTimersAsync();
     expect(ready).not.toHaveBeenCalled();
+  });
+  it('withdraws an offline function when the current server catalog returns no matching candidate', async () => {
+    const session = new SqlCompletionSession(vi.fn().mockResolvedValue(response([])));
+    const ready = vi.fn(); const cancellation = token();
+    const local = response([item('UNSUPPORTED_FN', { kind: 'FUNCTION' })]);
+    await session.progressive(params(), cancellation, () => true, 'editor', local, ready);
+    await vi.runAllTimersAsync();
+    expect(ready).toHaveBeenCalledOnce();
+    expect((await session.progressive(params(), cancellation, () => true, 'editor', local, ready)).items).toEqual([]);
+  });
+  it('keeps offline candidates when the completion request fails', async () => {
+    const session = new SqlCompletionSession(vi.fn().mockRejectedValue(new Error('offline')));
+    const ready = vi.fn(); const cancellation = token(); const local = response([item('UPPER', { kind: 'FUNCTION' })]);
+    await session.progressive(params(), cancellation, () => true, 'editor', local, ready);
+    await vi.runAllTimersAsync();
+    expect(ready).not.toHaveBeenCalled();
+    expect((await session.progressive(params(), cancellation, () => true, 'editor', local, ready)).items[0].label).toBe('UPPER');
   });
   it('waits for the debounce interval', async () => {
     const transport = vi.fn().mockResolvedValue(response()); const session = new SqlCompletionSession(transport);

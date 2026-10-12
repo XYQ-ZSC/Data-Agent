@@ -929,7 +929,10 @@
       "alias": "Alias",
       "snippet": "SQL template",
       "all_columns": "All columns",
-      "join": "JOIN condition"
+      "join": "JOIN condition",
+      "variable": "Variable",
+      "package": "Package",
+      "synonym": "Synonym"
     },
     "templates": {
       "sel": "Select data from a table",

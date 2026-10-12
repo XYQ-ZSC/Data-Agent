@@ -7,6 +7,7 @@ import { useTheme } from '../../hooks/useTheme';
 import { useAuthStore } from '../../store/authStore';
 import { EXPLORER_SQL_OBJECT_CHANGED } from '../../constants/explorer';
 import { SqlCompletionSession, staticCompletions, completionSortText } from './completion/sqlCompletion';
+import { SqlCompletionDictionary } from './completion/sqlCompletionDictionary';
 import './MonacoEditor.css';
 
 // Configure Monaco CDN
@@ -52,12 +53,16 @@ const COMPLETION_KIND_MAP: Record<SqlCompletionKind, string> = {
   SNIPPET: 'Snippet',
   ALL_COLUMNS: 'Field',
   JOIN: 'Reference',
+  VARIABLE: 'Variable',
+  PACKAGE: 'Module',
+  SYNONYM: 'Reference',
 };
 
 const COMPLETION_TYPE_KEYS: Record<SqlCompletionKind, string> = {
   KEYWORD: 'keyword', FUNCTION: 'function', PROCEDURE: 'procedure', SCHEMA: 'schema',
   TABLE: 'table', VIEW: 'view', COLUMN: 'column', ALIAS: 'alias', SNIPPET: 'snippet',
   ALL_COLUMNS: 'all_columns', JOIN: 'join',
+  VARIABLE: 'variable', PACKAGE: 'package', SYNONYM: 'synonym',
 };
 
 // Keep all supplementary information in Monaco's right-aligned description column.
@@ -69,6 +74,8 @@ const completionLabel = (item: SqlCompletionItem, typeLabel: string) => {
     const signatureDetail = [parameters, returnType].filter(Boolean).join(' → ');
     description = [typeLabel, signatureDetail].filter(Boolean).join(' · ');
   } else if (item.kind === 'COLUMN') {
+    description = [typeLabel, item.detail].filter(Boolean).join(' · ');
+  } else if (item.kind === 'VARIABLE' || item.kind === 'SYNONYM') {
     description = [typeLabel, item.detail].filter(Boolean).join(' · ');
   }
   return { label: item.label, description };
@@ -98,25 +105,38 @@ export const MonacoEditor = forwardRef<MonacoEditorHandle, MonacoEditorProps>(
     const bindingRef = useRef(binding);
     bindingRef.current = binding;
     const sessionRef = useRef<SqlCompletionSession | null>(null);
-    const dictionaryRef = useRef<{ binding: string; items: SqlCompletionItem[] } | null>(null);
-    const dictionaryPendingRef = useRef<Promise<void> | null>(null);
+    const dictionaryRef = useRef<{ binding: string; dictionary: SqlCompletionDictionary } | null>(null);
 
     useEffect(() => {
       sessionRef.current?.reset();
       dictionaryRef.current = null;
-      const controller = new AbortController();
-      const connectionId = completionContext?.connectionId;
-      dictionaryPendingRef.current = connectionId ? sqlCompletionService.dictionary(connectionId, controller.signal)
-        .then(result => { if (!controller.signal.aborted && bindingRef.current === binding) dictionaryRef.current = { binding, items: result.items }; })
-        .catch(() => {}) : null;
+      const context = completionContextRef.current;
+      const connectionId = context?.connectionId;
+      const dictionary = connectionId ? new SqlCompletionDictionary(
+        (resolveEnvironment, signal) => sqlCompletionService.dictionary(connectionId, signal,
+          resolveEnvironment ? { ...context, resolveEnvironment: true } : undefined),
+        () => { if (bindingRef.current === binding) sessionRef.current?.reset(); },
+      ) : null;
+      if (dictionary) dictionaryRef.current = { binding, dictionary };
       const invalidate = (event: Event) => {
         const detail = (event as CustomEvent<{ connectionId?: number }>).detail;
-        if (detail?.connectionId !== connectionId || !connectionId) return;
+        if (detail?.connectionId !== connectionId || !connectionId || !dictionary) return;
+        dictionary.invalidate();
         sessionRef.current?.reset();
-        void sqlCompletionService.invalidate(connectionId).finally(() => sessionRef.current?.reset()).catch(() => {});
+        void sqlCompletionService.invalidate(connectionId).then(() => {
+          if (bindingRef.current !== binding || dictionaryRef.current?.dictionary !== dictionary) return;
+          // Fence completions started while server-side DDL invalidation was pending.
+          dictionary.invalidate();
+          sessionRef.current?.reset();
+          return dictionary.refresh();
+        }).catch(() => {});
       };
       window.addEventListener(EXPLORER_SQL_OBJECT_CHANGED, invalidate);
-      return () => { controller.abort(); sessionRef.current?.reset(); window.removeEventListener(EXPLORER_SQL_OBJECT_CHANGED, invalidate); };
+      return () => {
+        dictionary?.dispose();
+        sessionRef.current?.reset();
+        window.removeEventListener(EXPLORER_SQL_OBJECT_CHANGED, invalidate);
+      };
     }, [binding]);
 
     useEffect(() => {
@@ -231,20 +251,21 @@ export const MonacoEditor = forwardRef<MonacoEditorHandle, MonacoEditorProps>(
           const ctx = completionContextRef.current;
           if (!ctx?.connectionId || model !== editorRef.current?.getModel()) return { suggestions: [] };
           const requestBinding = bindingRef.current;
+          const dictionary = dictionaryRef.current;
           const version = model.getVersionId();
           const current = () => {
             const cursor = editorRef.current?.getPosition();
-            return bindingRef.current === requestBinding && !model.isDisposed()
+            return bindingRef.current === requestBinding && dictionaryRef.current === dictionary && !model.isDisposed()
               && model === editorRef.current?.getModel() && model.getVersionId() === version
               && cursor?.lineNumber === position.lineNumber && cursor?.column === position.column;
           };
-          await dictionaryPendingRef.current;
+          if (dictionary?.binding === requestBinding) await dictionary.dictionary.ready;
           if (token.isCancellationRequested || !current()) return { suggestions: [] };
           const sql = model.getValue();
           const cursorOffset = model.getOffsetAt(position);
-          const dictionary = dictionaryRef.current;
+          if (dictionary?.binding === requestBinding) void dictionary.dictionary.refresh();
           const local = dictionary?.binding === requestBinding
-            ? staticCompletions(dictionary.items, sql, cursorOffset) : { items: [], incomplete: false };
+            ? staticCompletions(dictionary.dictionary.items, sql, cursorOffset) : { items: [], incomplete: false };
           const result = await session.progressive({
             connectionId: ctx.connectionId, databaseName: ctx.databaseName, schemaName: ctx.schemaName, sql, cursorOffset,
           }, token, current, `${requestBinding}:${model.uri.toString()}`, local, () => {

@@ -52,7 +52,7 @@ export interface SqlScriptAnalysis {
 }
 
 /** SQL completion, returned from backend /api/db/sql/complete */
-export type SqlCompletionKind = 'KEYWORD' | 'FUNCTION' | 'PROCEDURE' | 'SCHEMA' | 'TABLE' | 'VIEW' | 'COLUMN' | 'ALIAS' | 'SNIPPET' | 'ALL_COLUMNS' | 'JOIN';
+export type SqlCompletionKind = 'KEYWORD' | 'FUNCTION' | 'PROCEDURE' | 'SCHEMA' | 'TABLE' | 'VIEW' | 'COLUMN' | 'ALIAS' | 'SNIPPET' | 'ALL_COLUMNS' | 'JOIN' | 'VARIABLE' | 'PACKAGE' | 'SYNONYM';
 
 export interface SqlCompletionItem {
   label: string;
@@ -71,6 +71,7 @@ export interface SqlCompletionItem {
 export interface SqlCompletionResponse {
   items: SqlCompletionItem[];
   incomplete: boolean;
+  environment?: { databaseVersion: string | null; settings: Record<string, string> } | null;
 }
 
 export interface SqlCompletionParams {

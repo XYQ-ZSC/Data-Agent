@@ -930,7 +930,10 @@
       "alias": "别名",
       "snippet": "SQL 模板",
       "all_columns": "全部字段",
-      "join": "JOIN 关联"
+      "join": "JOIN 关联",
+      "variable": "变量",
+      "package": "包",
+      "synonym": "同义词"
     },
     "templates": {
       "sel": "从表中查询数据",
