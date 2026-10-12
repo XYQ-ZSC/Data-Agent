@@ -10,6 +10,8 @@ public enum CompletionScope {
     NONE,
     /** Start of a statement or a position where only keywords/functions make sense. */
     KEYWORD,
+    PROCEDURAL,
+    VARIABLE,
     /** A table or view (or schema qualifier) is expected, e.g. after FROM / JOIN / INTO / UPDATE. */
     TABLE,
     JOIN,

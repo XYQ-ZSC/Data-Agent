@@ -1,10 +1,10 @@
 package edu.zsc.ai.plugin.capability;
 
-import edu.zsc.ai.plugin.model.sql.CompletionContext;
-import edu.zsc.ai.plugin.model.sql.CompletionFunction;
+import edu.zsc.ai.plugin.model.sql.*;
 
 import java.util.List;
 import java.util.Set;
+import java.sql.Connection;
 
 /**
  * Dialect-aware completion support. The implementation must tolerate
@@ -35,6 +35,21 @@ public interface SqlCompleter {
     default List<CompletionFunction> functionTemplates() {
         return completionFunctions().stream().map(name ->
                 new CompletionFunction(name, name + "(${1:})", name + "(…)", true)).toList();
+    }
+
+    default CompletionFunctionCatalog functionCatalog(Connection connection) {
+        return new CompletionFunctionCatalog(functionTemplates(), null, false);
+    }
+
+    default List<String> completionPackages(Connection connection, String schema) { return List.of(); }
+
+    default List<CompletionRoutine> completionPackageMembers(Connection connection, String schema, String packageName) { return List.of(); }
+
+    default List<CompletionSynonym> completionSynonyms(Connection connection, String schema) { return List.of(); }
+
+    default String completionSchema(Connection connection, String schema) {
+        if (schema != null && !schema.isBlank()) return schema;
+        try { return connection.getSchema(); } catch (java.sql.SQLException e) { return schema; }
     }
 
     /**

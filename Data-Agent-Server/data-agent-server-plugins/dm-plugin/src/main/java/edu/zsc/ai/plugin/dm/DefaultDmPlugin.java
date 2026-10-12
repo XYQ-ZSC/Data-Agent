@@ -32,6 +32,7 @@ import edu.zsc.ai.plugin.dm.manager.DmTableManager;
 import edu.zsc.ai.plugin.dm.manager.DmTriggerManager;
 import edu.zsc.ai.plugin.dm.manager.DmViewManager;
 import edu.zsc.ai.plugin.dm.support.DmMetadataSupport;
+import edu.zsc.ai.plugin.dm.support.DmCompletionMetadata;
 import edu.zsc.ai.plugin.dm.support.DmObjectQuerySupport;
 import edu.zsc.ai.plugin.driver.MavenCoordinates;
 import edu.zsc.ai.plugin.model.command.sql.SqlCommandRequest;
@@ -49,6 +50,9 @@ import edu.zsc.ai.plugin.dm.parser.DmSqlParser;
 import edu.zsc.ai.plugin.dm.util.DmIdentifierEscaper;
 import edu.zsc.ai.plugin.dm.value.DmValueProcessor;
 import edu.zsc.ai.plugin.model.sql.CompletionContext;
+import edu.zsc.ai.plugin.model.sql.CompletionFunctionCatalog;
+import edu.zsc.ai.plugin.model.sql.CompletionRoutine;
+import edu.zsc.ai.plugin.model.sql.CompletionSynonym;
 import edu.zsc.ai.plugin.model.sql.SqlType;
 import edu.zsc.ai.plugin.model.sql.SqlValidationResult;
 import edu.zsc.ai.plugin.model.sql.SqlScriptAnalysis;
@@ -80,6 +84,7 @@ public abstract class DefaultDmPlugin extends AbstractDatabasePlugin
     private final DmSqlExecutor sqlExecutor = new DmSqlExecutor();
     private final DmMetadataSupport metadataSupport = new DmMetadataSupport();
     private final DmObjectQuerySupport objectQuerySupport = new DmObjectQuerySupport();
+    private final DmCompletionMetadata completionMetadata = new DmCompletionMetadata(objectQuerySupport);
     private final TableManager tableManager = new DmTableManager(metadataSupport);
     private final ViewManager viewManager = new DmViewManager(metadataSupport);
     private final ColumnManager columnManager = new DmColumnManager(metadataSupport);
@@ -253,6 +258,27 @@ public abstract class DefaultDmPlugin extends AbstractDatabasePlugin
     @Override
     public List<edu.zsc.ai.plugin.model.sql.CompletionFunction> functionTemplates() {
         return DmKeywords.functionTemplates();
+    }
+
+    @Override
+    public CompletionFunctionCatalog functionCatalog(Connection connection) {
+        return completionMetadata.functions(connection);
+    }
+    @Override
+    public List<String> completionPackages(Connection connection, String schema) {
+        return completionMetadata.packages(connection, schema);
+    }
+    @Override
+    public List<CompletionRoutine> completionPackageMembers(Connection connection, String schema, String packageName) {
+        return completionMetadata.members(connection, schema, packageName);
+    }
+    @Override
+    public List<CompletionSynonym> completionSynonyms(Connection connection, String schema) {
+        return completionMetadata.synonyms(connection, schema);
+    }
+    @Override
+    public String completionSchema(Connection connection, String schema) {
+        return objectQuerySupport.resolveSchema(connection, schema);
     }
 
     @Override

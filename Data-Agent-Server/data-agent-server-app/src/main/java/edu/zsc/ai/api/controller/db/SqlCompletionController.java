@@ -22,8 +22,10 @@ public class SqlCompletionController {
     private final SqlCompletionService sqlCompletionService;
 
     @GetMapping("/completion-dictionary")
-    public ApiResponse<SqlCompletionResponse> dictionary(@RequestParam Long connectionId) {
-        return ApiResponse.success(sqlCompletionService.dictionary(connectionId));
+    public ApiResponse<SqlCompletionResponse> dictionary(@RequestParam Long connectionId,
+            @RequestParam(required = false) String catalog, @RequestParam(required = false) String schema,
+            @RequestParam(defaultValue = "false") boolean resolveEnvironment) {
+        return ApiResponse.success(sqlCompletionService.dictionary(new DbContext(connectionId, catalog, schema), resolveEnvironment));
     }
 
     @PostMapping("/completion-invalidate")

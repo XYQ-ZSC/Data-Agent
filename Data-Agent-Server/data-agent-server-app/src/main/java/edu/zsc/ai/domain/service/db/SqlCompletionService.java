@@ -8,6 +8,7 @@ public interface SqlCompletionService {
     SqlCompletionResponse complete(DbContext db, String sql, int cursorOffset);
 
     SqlCompletionResponse dictionary(Long connectionId);
+    SqlCompletionResponse dictionary(DbContext db, boolean resolveEnvironment);
 
     void invalidate(Long connectionId);
 }

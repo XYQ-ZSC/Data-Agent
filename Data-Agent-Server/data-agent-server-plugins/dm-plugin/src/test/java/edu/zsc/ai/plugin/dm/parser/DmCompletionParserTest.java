@@ -12,6 +12,43 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class DmCompletionParserTest {
+    @Test void routineParametersAreScopedToEachRoutineInAScript() {
+        String first = "SELECT 1 FROM DUAL; CREATE PROCEDURE p(p_id IN INTEGER) AS BEGIN SELECT p_";
+        assertEquals(List.of("P_ID"), analyze(first).variables().stream().map(v -> v.name().name()).toList());
+        String second = "CREATE PROCEDURE first_p(first_id INTEGER) AS BEGIN NULL; END; "
+                + "CREATE OR REPLACE FUNCTION APP.\"Second\"(\"secondId\" INTEGER) RETURN INTEGER AS BEGIN SELECT ";
+        assertEquals(List.of("secondId"), analyze(second).variables().stream().map(v -> v.name().name()).toList());
+        assertTrue(analyze(second + "1; END; SELECT ").variables().isEmpty());
+    }
+
+    @Test void proceduralStatementBoundariesRemainDistinctFromCaseExpressions() {
+        for (String prefix : List.of("BEGIN IF 1 = 1 THEN ", "BEGIN IF 1 = 1 THEN NULL; ELSE ",
+                "BEGIN FOR i IN 1..10 LOOP ", "BEGIN CASE WHEN 1 = 1 THEN ")) {
+            assertEquals(CompletionScope.PROCEDURAL, analyze(prefix).scope(), prefix);
+            assertTrue(!analyze(prefix + "HR_API.").expressionPosition(), prefix);
+        }
+        for (String prefix : List.of("BEGIN v := CASE WHEN 1 = 1 THEN ",
+                "BEGIN v := CASE WHEN 1 = 1 THEN NULL ELSE ",
+                "BEGIN SELECT CASE WHEN 1 = 1 THEN ", "BEGIN RETURN ",
+                "BEGIN v := CASE WHEN 1 = 1 THEN CASE WHEN 2 = 2 THEN ")) {
+            assertTrue(analyze(prefix + "HR_API.").expressionPosition(), prefix);
+        }
+    }
+
+    @Test void proceduralBindingsFollowScopeAndDoNotEscapeClosedBlocks() {
+        String sql = "DECLARE v NUMBER; BEGIN DECLARE v VARCHAR(10); BEGIN v";
+        var context = DmCompletionParser.INSTANCE.analyze(sql,sql.length());
+        assertTrue(context.procedural());
+        assertEquals("VARCHAR(10)",context.variables().get(0).type());
+        sql = "DECLARE v NUMBER; BEGIN DECLARE hidden VARCHAR(10); BEGIN NULL; END; v";
+        context = DmCompletionParser.INSTANCE.analyze(sql,sql.length());
+        assertEquals(List.of("V"),context.variables().stream().map(v -> v.name().name()).toList());
+    }
+    @Test void sqlCaseEndDoesNotCloseTheProceduralBlock() {
+        String sql="DECLARE v NUMBER; BEGIN SELECT CASE WHEN 1=1 THEN 1 ELSE 2 END INTO v FROM DUAL; v";
+        var context=DmCompletionParser.INSTANCE.analyze(sql,sql.length());
+        assertTrue(context.procedural()); assertEquals("V",context.variables().get(0).name().name());
+    }
 
     private final DmCompletionParser parser = DmCompletionParser.INSTANCE;
 

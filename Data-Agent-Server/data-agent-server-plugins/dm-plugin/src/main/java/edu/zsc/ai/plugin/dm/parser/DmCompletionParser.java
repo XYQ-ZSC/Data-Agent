@@ -13,8 +13,8 @@ public final class DmCompletionParser {
         return new Analysis(sql == null ? "" : sql, cursorOffset).analyze();
     }
 
-    private enum Kind { WORD, QUOTED, STRING, COMMENT, SYMBOL, NUMBER }
-    private record Lexeme(Kind kind, String value, int start, int end, boolean closed) {
+    enum Kind { WORD, QUOTED, STRING, COMMENT, SYMBOL, NUMBER }
+    record Lexeme(Kind kind, String value, int start, int end, boolean closed) {
         boolean is(String word) { return (kind == Kind.WORD || kind == Kind.SYMBOL) && value.equalsIgnoreCase(word); }
         CompletionIdentifier identifier() {
             return kind == Kind.QUOTED ? new CompletionIdentifier(value, true)
@@ -29,7 +29,12 @@ public final class DmCompletionParser {
             "FUNCTION", "PROCEDURE", "SCHEMA", "AND", "OR", "NOT", "IN", "IS", "NULL", "EXISTS",
             "CASE", "WHEN", "THEN", "ELSE", "END", "LIMIT", "OFFSET", "FETCH", "FOR", "OF",
             "CONNECT", "START", "RETURNING", "ASC", "DESC", "NULLS", "FIRST", "LAST", "CALL");
-    private static boolean identifier(Lexeme t) {
+    private static final Set<String> SQL_STARTS = Set.of("SELECT","WITH","INSERT","UPDATE","DELETE","MERGE","CALL","EXECUTE","FETCH");
+    private static final Set<String> EXPRESSION_STARTS = Set.of(
+            "SELECT", "DISTINCT", "ALL", "WHERE", "ON", "HAVING", "BY", "AND", "OR", "NOT",
+            "WHEN", "THEN", "ELSE", "SET", "VALUES", "BETWEEN", "LIKE", "IN", "IS", "RETURN",
+            "IF", "ELSIF", "WHILE", "(", ",", "=", ">", "<", "+", "-", "*", "/", ":");
+    static boolean identifier(Lexeme t) {
         return t.kind == Kind.QUOTED || t.kind == Kind.WORD
                 && !STRUCTURAL.contains(t.value.toUpperCase(Locale.ROOT));
     }
@@ -113,6 +118,7 @@ public final class DmCompletionParser {
         final Map<String, Cte> ctes;
         final List<Relation> relations = new ArrayList<>();
         final List<CompletionProjection> projections = new ArrayList<>();
+        Node firstBranch;
         Node(int start, int end, int left, int right, Node parent, Map<String, Cte> ctes) {
             this.start = start; this.end = end; this.left = left; this.right = right;
             this.parent = parent; this.ctes = new LinkedHashMap<>(ctes);
@@ -137,6 +143,12 @@ public final class DmCompletionParser {
         int replaceStart, replaceEnd;
         String prefix = "";
         boolean quoted;
+        Node active;
+        String clause = "", statement = "";
+        List<Lexeme> before = List.of();
+        boolean expressionPosition;
+        List<CompletionVariable> variables = List.of();
+        boolean procedural;
 
         Analysis(String text, int cursor) {
             this.text = text; this.cursor = Math.max(0, Math.min(cursor, text.length()));
@@ -169,6 +181,10 @@ public final class DmCompletionParser {
                     break;
                 }
             }
+            var proceduralScope = new DmProceduralScopeAnalyzer(text, tokens, closes, replaceStart,
+                    (start, end) -> parseQuery(start, end, null, Map.of(), 0).model(new ModelState(), List.of())).analyze();
+            variables = proceduralScope.variables();
+            procedural = proceduralScope.procedural();
             int start = 0, end = tokens.size(), depth = 0;
             for (int i = 0; i < tokens.size(); i++) {
                 if (at(i, "(")) depth++;
@@ -179,34 +195,48 @@ public final class DmCompletionParser {
                 }
             }
             Node root = parseQuery(start, end, null, Map.of(), 0);
-            Node active = nodes.stream().filter(n -> n.left <= cursor && cursor <= n.right)
+            active = nodes.stream().filter(n -> n.left <= cursor && cursor <= n.right)
                     .min(Comparator.comparingInt(n -> n.right - n.left)).orElse(root);
             List<CompletionRelation> relations = visible(active);
             Map<String, CompletionQuery> ctes = new LinkedHashMap<>();
             if (active != null) active.ctes.forEach((name, cte) -> ctes.put(name, cte.body == null
                     ? new CompletionQuery(List.of(), List.of(), cte.columns) : cte.body.model(new ModelState(), cte.columns)));
-            List<Lexeme> before = tokens.stream().filter(t -> t.end <= replaceStart
+            before = tokens.stream().filter(t -> t.end <= replaceStart
                     && (active == null || t.start >= active.left)).toList();
-            String clause = currentClause(before);
+            clause = currentClause(before);
+            statement = active != null && active.start < tokens.size() ? tokens.get(active.start).value.toUpperCase(Locale.ROOT) : "";
+            expressionPosition = before.isEmpty() || expressionBoundary(before.get(before.size()-1));
+            if (clause.equals("ORDER") && active != null && active.firstBranch != null && active.firstBranch != active) relations = List.of();
             int expressionDepth = 0;
             for (Lexeme token : before) {
                 if (token.is("(")) expressionDepth++;
                 else if (token.is(")")) expressionDepth = Math.max(0, expressionDepth - 1);
             }
             boolean selectList = clause.equals("SELECT") && expressionDepth == 0;
-            if (before.isEmpty() || before.get(before.size() - 1).is(";")) return context(CompletionScope.KEYWORD, null, null, relations, ctes, false, List.of());
+            if (before.isEmpty() || before.get(before.size() - 1).is(";")) return context(procedural ? CompletionScope.PROCEDURAL : CompletionScope.KEYWORD, null, null, relations, ctes, false, List.of());
             Lexeme last = before.get(before.size() - 1);
             if (last.is(".")) {
                 List<CompletionIdentifier> chain = qualifier(before);
+                int preceding = before.size() - chain.size() * 2 - 1;
+                expressionPosition = preceding >= 0 && expressionBoundary(before.get(preceding));
                 CompletionTableRef table = chain.size() >= 2 ? CompletionTableRef.of(chain.get(chain.size()-2).name(), chain.get(chain.size()-1).name()) : null;
                 return context(CompletionScope.QUALIFIED, chain.size() == 1 ? chain.get(0).name() : null, table, relations, ctes, selectList, List.of());
             }
             if (last.is("JOIN")) return context(CompletionScope.JOIN, null, null, relations, ctes, false, List.of());
+            if (procedural && (statement.equals("SELECT") || statement.equals("FETCH")) && clause.equals("INTO"))
+                return context(CompletionScope.VARIABLE,null,null,relations,ctes,false,List.of());
             if (last.is("FROM") || last.is("INTO") || last.is("UPDATE") || last.is("USING")
                     || last.is(",") && clause.equals("FROM") || last.is("TABLE") && before.stream().anyMatch(t -> t.is("ALTER") || t.is("DROP") || t.is("TRUNCATE")))
                 return context(CompletionScope.TABLE, null, null, relations, ctes, false, List.of());
             if (last.is("CALL") || last.is("EXECUTE") || last.is("PROCEDURE")) return context(CompletionScope.PROCEDURE, null, null, relations, ctes, false, List.of());
             if (last.is("FUNCTION")) return context(CompletionScope.FUNCTION, null, null, relations, ctes, false, List.of());
+            if (last.is("AS")) return context(CompletionScope.NONE,null,null,relations,ctes,false,List.of());
+            if (procedural && clause.isEmpty() && (last.is("BEGIN") || last.is("LOOP") || last.is("EXCEPTION")
+                    || (last.is("THEN") || last.is("ELSE")) && !expressionPosition))
+                return context(CompletionScope.PROCEDURAL, null, null, relations, ctes, false, List.of());
+            if (last.is("CREATE") || last.is("ALTER") || last.is("DROP") || last.is("TRUNCATE")
+                    || last.is("ORDER") || last.is("GROUP") || last.is("NULLS")
+                    || clause.equals("FROM")) return context(CompletionScope.KEYWORD, null, null, relations, ctes, false, List.of());
             int insertOpen = insertColumnsOpen(active);
             if (insertOpen >= 0) {
                 List<String> used = tokens.subList(insertOpen + 1, tokens.size()).stream()
@@ -239,23 +269,96 @@ public final class DmCompletionParser {
         private CompletionContext context(CompletionScope scope, String qualifier, CompletionTableRef table,
                                            List<CompletionRelation> relations, Map<String, CompletionQuery> ctes,
                                            boolean selectList, List<String> excluded) {
-            Map<String, CompletionTableRef> aliases = new LinkedHashMap<>();
-            List<CompletionTableRef> tables = new ArrayList<>();
-            Map<String, List<String>> derived = new LinkedHashMap<>(), cteColumns = new LinkedHashMap<>();
-            ctes.forEach((name, query) -> cteColumns.put(name, names(query)));
-            for (CompletionRelation relation : relations) {
-                if (relation.logical()) { if (relation.aliased()) derived.put(relation.qualifier().name(), names(relation.query())); }
-                else if (relation.aliased()) aliases.put(relation.qualifier().name(), relation.table());
-                else tables.add(relation.table());
+            return new CompletionContext(scope, qualifier, table, replaceStart, replaceEnd, prefix, quoted,
+                    relations, ctes, selectList, excluded,
+                    active == null ? null : (clause.equals("ORDER") && active.firstBranch != null ? active.firstBranch : active).model(new ModelState(), List.of()), clause, statement,
+                    keywords(scope), expressionPosition, variables, procedural);
+        }
+        private boolean expressionBoundary(Lexeme token) {
+            if (procedural && clause.isEmpty() && (token.is("THEN") || token.is("ELSE"))) {
+                Deque<Boolean> cases = new ArrayDeque<>();
+                for (int i = 0; i < before.size() && before.get(i).start < token.start; i++) {
+                    Lexeme current = before.get(i);
+                    if (current.is("CASE") && (i == 0 || !before.get(i - 1).is("END"))) {
+                        Lexeme previous = i == 0 ? null : before.get(i - 1);
+                        boolean conditionalBranch = previous != null && (previous.is("THEN") || previous.is("ELSE"));
+                        cases.push(conditionalBranch ? !cases.isEmpty() && cases.peek()
+                                : previous != null && isExpressionStart(previous));
+                    } else if (current.is("END") && !cases.isEmpty()
+                            && (i + 1 == before.size() || !List.of("IF", "LOOP").stream().anyMatch(before.get(i + 1)::is))) {
+                        cases.pop();
+                    }
+                }
+                return !cases.isEmpty() && cases.peek();
             }
-            return new CompletionContext(scope, qualifier, table, aliases, tables, List.copyOf(ctes.keySet()), cteColumns,
-                    derived, replaceStart, replaceEnd, prefix, quoted, relations, ctes, selectList, excluded);
+            return isExpressionStart(token);
         }
-        private List<String> names(CompletionQuery query) {
-            if (query == null) return List.of();
-            if (!query.explicitColumns().isEmpty()) return query.explicitColumns().stream().map(CompletionIdentifier::name).toList();
-            return query.projections().stream().filter(p -> p.output() != null).map(p -> p.output().name()).toList();
+
+        private boolean isExpressionStart(Lexeme token) {
+            return (token.kind == Kind.WORD || token.kind == Kind.SYMBOL)
+                    && EXPRESSION_STARTS.contains(token.value.toUpperCase(Locale.ROOT));
         }
+        private List<String> keywords(CompletionScope scope) {
+            if (scope == CompletionScope.NONE || scope == CompletionScope.VARIABLE || scope == CompletionScope.QUALIFIED || scope == CompletionScope.TABLE
+                    || scope == CompletionScope.JOIN || scope == CompletionScope.INSERT_COLUMN || scope == CompletionScope.UPDATE_COLUMN
+                    || scope == CompletionScope.FUNCTION || scope == CompletionScope.PROCEDURE) return List.of();
+            if (scope == CompletionScope.PROCEDURAL) return List.of("SELECT", "INSERT", "UPDATE", "DELETE", "MERGE", "BEGIN", "DECLARE",
+                    "IF", "ELSIF", "ELSE", "END", "LOOP", "WHILE", "FOR", "RETURN", "NULL", "EXCEPTION", "RAISE", "EXIT", "CONTINUE", "OPEN", "FETCH", "CLOSE");
+            if (before.isEmpty()) return List.of("SELECT", "INSERT", "UPDATE", "DELETE", "MERGE", "WITH", "CREATE",
+                    "ALTER", "DROP", "TRUNCATE", "CALL", "EXECUTE", "COMMIT", "ROLLBACK", "SAVEPOINT", "GRANT", "REVOKE", "EXPLAIN", "DECLARE", "BEGIN");
+            Lexeme last = before.get(before.size()-1);
+            if (last.is("INSERT")) return List.of("INTO");
+            if (last.is("DELETE")) return List.of("FROM");
+            if (statement.equals("UPDATE") && clause.isEmpty()) return List.of("SET");
+            if (statement.equals("INSERT") && clause.equals("INTO")) return List.of("VALUES", "SELECT");
+            if (last.is("ORDER") || last.is("GROUP")) return List.of("BY");
+            if (last.is("NULLS")) return List.of("FIRST", "LAST");
+            if (last.is("CREATE") || last.is("ALTER") || last.is("DROP")) return List.of("TABLE", "VIEW", "INDEX", "SCHEMA", "SEQUENCE", "FUNCTION", "PROCEDURE", "PACKAGE", "SYNONYM", "TRIGGER", "USER", "ROLE");
+            if (last.is("TRUNCATE")) return List.of("TABLE");
+            if (clause.equals("FROM")) {
+                if (List.of("LEFT","RIGHT","FULL").stream().anyMatch(last::is)) return List.of("JOIN","OUTER JOIN");
+                if (List.of("INNER","OUTER","CROSS","NATURAL").stream().anyMatch(last::is)) return List.of("JOIN");
+                boolean pending = false;
+                int depth = 0;
+                for (int i = 0; i < before.size(); i++) {
+                    Lexeme token = before.get(i);
+                    if (token.is("(")) depth++;
+                    else if (token.is(")")) depth--;
+                    else if (depth == 0 && token.is("JOIN")) pending = i == 0 || !(before.get(i-1).is("CROSS") || before.get(i-1).is("NATURAL"));
+                    else if (depth == 0 && (token.is("ON") || token.is("USING"))) pending = false;
+                }
+                if (pending) return List.of("ON", "USING");
+                return List.of("WHERE", "JOIN", "LEFT JOIN", "RIGHT JOIN", "INNER JOIN", "FULL JOIN", "CROSS JOIN", "GROUP BY", "ORDER BY", "UNION", "INTERSECT", "MINUS", "AS");
+            }
+            if (clause.equals("ORDER")) return expressionPosition ? List.of() : List.of("ASC", "DESC", "NULLS", "LIMIT", "OFFSET", "FETCH");
+            if (clause.equals("GROUP")) return expressionPosition ? List.of() : List.of("HAVING", "ORDER BY");
+            if (expressionPosition) return last.is("SELECT") ? List.of("DISTINCT", "ALL", "TOP", "CASE", "NULL") : List.of("CASE", "NULL", "EXISTS", "NOT");
+            int parentheses = 0;
+            Deque<String> cases = new ArrayDeque<>();
+            for (Lexeme token : before) {
+                if (token.is("(")) parentheses++;
+                else if (token.is(")")) parentheses--;
+                if (token.is("CASE")) cases.push("CASE");
+                else if (!cases.isEmpty() && (token.is("WHEN") || token.is("THEN") || token.is("ELSE"))) { cases.pop(); cases.push(token.value.toUpperCase(Locale.ROOT)); }
+                else if (token.is("END") && !cases.isEmpty()) cases.pop();
+            }
+            if (!cases.isEmpty()) return switch (cases.peek()) {
+                case "CASE" -> List.of("WHEN");
+                case "WHEN" -> List.of("THEN", "AND", "OR", "IS", "IN", "LIKE", "BETWEEN");
+                case "THEN" -> List.of("WHEN", "ELSE", "END");
+                default -> List.of("END");
+            };
+            if (parentheses > 0) return List.of();
+            if (procedural && clause.isEmpty()) {
+                if (before.stream().anyMatch(t -> t.is("IF") || t.is("ELSIF")) && before.stream().noneMatch(t -> t.is("THEN"))) return List.of("THEN", "AND", "OR", "IS", "IN");
+                if (before.stream().anyMatch(t -> t.is("WHILE")) && before.stream().noneMatch(t -> t.is("LOOP"))) return List.of("LOOP", "AND", "OR");
+            }
+            if (clause.equals("SELECT")) return List.of("FROM", "AS");
+            if (clause.equals("WHERE") || clause.equals("ON") || clause.equals("HAVING")) return List.of("AND", "OR", "IS", "IN", "NOT IN", "LIKE", "BETWEEN", "GROUP BY", "ORDER BY");
+            if (clause.equals("SET")) return List.of("WHERE", "RETURNING");
+            return List.of();
+        }
+
         private List<CompletionIdentifier> qualifier(List<Lexeme> before) {
             List<CompletionIdentifier> out = new ArrayList<>();
             for (int i = before.size()-2; i >= 0 && identifier(before.get(i)); i -= 2) {
@@ -270,7 +373,7 @@ public final class DmCompletionParser {
             for (Lexeme token : before) {
                 if (token.is("(")) depth++;
                 else if (token.is(")")) depth = Math.max(0, depth-1);
-                else if (depth == 0 && List.of("SELECT","FROM","WHERE","GROUP","ORDER","HAVING","SET","VALUES","ON").stream().anyMatch(token::is)) clause = token.value.toUpperCase(Locale.ROOT);
+                else if (depth == 0 && List.of("SELECT","FROM","WHERE","GROUP","ORDER","HAVING","SET","VALUES","ON","INTO").stream().anyMatch(token::is)) clause = token.value.toUpperCase(Locale.ROOT);
             }
             return clause;
         }
@@ -314,9 +417,15 @@ public final class DmCompletionParser {
                 Node node = new Node(left, right, boundary(left), boundary(right), parent, ctes);
                 nodes.add(node);
                 if (first == null) first = node;
+                node.firstBranch = first;
                 projections(node);
                 for (int i = left; i < right; i++) {
-                    if (at(i,"FROM") || at(i,"JOIN") || at(i,"UPDATE") || at(i,"INTO")
+                    if (i > left && (at(i,"SELECT") && !at(left,"SELECT") && !at(left,"WITH")
+                            || tokens.get(i).kind == Kind.WORD && SQL_STARTS.contains(tokens.get(i).value.toUpperCase(Locale.ROOT))
+                            && !SQL_STARTS.contains(tokens.get(left).value.toUpperCase(Locale.ROOT)))) {
+                        parseQuery(i,right,node,ctes,nesting+1); break;
+                    }
+                    if (at(i,"FROM") || at(i,"JOIN") || at(i,"UPDATE") || at(i,"INTO") && !at(left,"SELECT")
                             || at(i,"USING") && at(left,"MERGE")) {
                         boolean from = at(i,"FROM");
                         int consumed = relation(node, i+1, right, nesting);

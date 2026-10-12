@@ -18,33 +18,7 @@ public final class DmKeywords {
     }
 
     public static List<edu.zsc.ai.plugin.model.sql.CompletionFunction> functionTemplates() {
-        Set<String> expressions = Set.of("SYSDATE", "CURRENT_DATE", "CURRENT_TIMESTAMP", "CURRENT_TIME",
-                "LOCALTIMESTAMP", "CURRENT_USER", "SESSION_USER");
-        Set<String> noArguments = Set.of("PI", "NOW", "CURDATE", "CURTIME", "UUID", "NEWID",
-                "DATABASE", "SCOPE_IDENTITY", "ROW_NUMBER", "RANK", "DENSE_RANK", "CUME_DIST", "PERCENT_RANK");
-        java.util.Map<String, List<String>> args = java.util.Map.ofEntries(
-                java.util.Map.entry("NVL", List.of("value", "replacement")),
-                java.util.Map.entry("NVL2", List.of("value", "if_not_null", "if_null")),
-                java.util.Map.entry("TO_DATE", List.of("text", "format")),
-                java.util.Map.entry("TO_CHAR", List.of("value", "format")),
-                java.util.Map.entry("SUBSTR", List.of("text", "start", "length")),
-                java.util.Map.entry("ROUND", List.of("number", "decimals")),
-                java.util.Map.entry("COUNT", List.of("*")),
-                java.util.Map.entry("COALESCE", List.of("value", "fallback")));
-        return FUNCTIONS.stream().map(name -> {
-            if (expressions.contains(name)) return new edu.zsc.ai.plugin.model.sql.CompletionFunction(name, name, name, false);
-            if (noArguments.contains(name)) return new edu.zsc.ai.plugin.model.sql.CompletionFunction(name, name + "()", name + "()", false);
-            if (name.equals("CAST")) return new edu.zsc.ai.plugin.model.sql.CompletionFunction(name,
-                    "CAST(${1:value} AS ${2:type})", "CAST(value AS type)", true);
-            List<String> params = args.getOrDefault(name, List.of(""));
-            StringBuilder insert = new StringBuilder(name).append('(');
-            for (int i = 0; i < params.size(); i++) {
-                if (i > 0) insert.append(", ");
-                insert.append("${").append(i+1).append(':').append(params.get(i)).append('}');
-            }
-            return new edu.zsc.ai.plugin.model.sql.CompletionFunction(name, insert.append(')').toString(),
-                    name + "(" + (args.containsKey(name) ? String.join(", ", params) : "…") + ")", true);
-        }).toList();
+        return DmBuiltinFunctions.templates();
     }
 
     public static final List<String> KEYWORDS = List.of(
@@ -71,7 +45,7 @@ public final class DmKeywords {
             // Permissions
             "GRANT", "REVOKE", "TO", "USER", "ROLE", "PUBLIC",
             // Misc
-            "EXPLAIN", "FOR", "FETCH", "FIRST", "NEXT", "ROWS", "ONLY", "ROWNUM",
+            "EXPLAIN", "CALL", "EXECUTE", "FOR", "FETCH", "FIRST", "NEXT", "ROWS", "ONLY", "ROWNUM",
             "TOP", "PERCENT", "DUAL", "RETURNING", "PARTITION", "OVER", "NULLS", "LAST"
     );
 

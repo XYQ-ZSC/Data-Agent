@@ -40,12 +40,34 @@ public class SqlCompletionServiceImpl implements SqlCompletionService {
 
     @Override
     public SqlCompletionResponse dictionary(Long connectionId) {
-        SqlCompleter completer = dialect(connectionId);
+        return dictionary(new DbContext(connectionId, null, null), false);
+    }
+
+    @Override
+    public SqlCompletionResponse dictionary(DbContext db, boolean resolveEnvironment) {
+        SqlCompleter completer = dialect(db.connectionId());
         if (completer == null) return new SqlCompletionResponse(List.of());
         CompletionContext context = completer.analyzeCompletionContext("", 0);
         List<SqlCompletionItem> items = new ArrayList<>();
-        addStatic(completer, context, "", items);
-        return finish(items, context, Integer.MAX_VALUE);
+        CompletionFunctionCatalog catalog = new CompletionFunctionCatalog(completer.functionTemplates(), null, false);
+        if (resolveEnvironment) {
+            try {
+                connectionService.openConnection(db);
+                var active = ActiveConnectionRegistry.getOwnedConnection(db);
+                SqlCompleter connected = DefaultPluginManager.getInstance().getSqlCompleterByPluginId(active.pluginId());
+                if (connected != null) completer = connected;
+                try (var borrowed = active.borrowConnection()) {
+                    catalog = functionCatalog(db, active.pluginId(), active.dataSource(), borrowed.connection(), completer);
+                }
+            } catch (RuntimeException e) { log.debug("Completion environment unavailable: {}", e.getMessage()); }
+        }
+        addStatic(completer, context, "", items, catalog.functions(), true);
+        var result = finish(items, context, Integer.MAX_VALUE);
+        return new SqlCompletionResponse(result.items(), result.incomplete(), catalog.environment());
+    }
+
+    private CompletionFunctionCatalog functionCatalog(DbContext db, String plugin, Object session, Connection connection, SqlCompleter dialect) {
+        return cache.get(plugin, db, "builtin-functions", null, session, () -> List.of(dialect.functionCatalog(connection))).get(0);
     }
 
     @Override
@@ -63,7 +85,7 @@ public class SqlCompletionServiceImpl implements SqlCompletionService {
         if (context.scope() == CompletionScope.NONE) return new SqlCompletionResponse(List.of());
         List<SqlCompletionItem> items = new ArrayList<>();
         addStatic(completer, context, sql, items);
-        if (context.scope() != CompletionScope.KEYWORD) {
+        if (context.scope() != CompletionScope.KEYWORD && context.scope() != CompletionScope.VARIABLE) {
             try {
                 connectionService.openConnection(db);
                 var active = ActiveConnectionRegistry.getOwnedConnection(db);
@@ -75,6 +97,11 @@ public class SqlCompletionServiceImpl implements SqlCompletionService {
                     addStatic(completer, context, sql, items);
                 }
                 try (var borrowed = active.borrowConnection()) {
+                    if (context.scope() == CompletionScope.COLUMN && context.expressionPosition() || context.scope() == CompletionScope.FUNCTION) {
+                        var functions = functionCatalog(db, active.pluginId(), active.dataSource(), borrowed.connection(), completer).functions();
+                        items.removeIf(i -> i.kind().equals("FUNCTION") && i.source().equals("static"));
+                        addFunctions(context, sql, items, functions, false);
+                    }
                     new Candidates(db, active.pluginId(), active.dataSource(), borrowed.connection(), completer, context, sql, items).build();
                 }
             } catch (RuntimeException e) {
@@ -87,22 +114,26 @@ public class SqlCompletionServiceImpl implements SqlCompletionService {
 
     private static void addStatic(SqlCompleter dialect, CompletionContext context, String sql,
                                   List<SqlCompletionItem> items) {
-        if (context.quotedPrefix()) return;
+        addStatic(dialect, context, sql, items, dialect.functionTemplates(), false);
+    }
+    private static void addStatic(SqlCompleter dialect, CompletionContext context, String sql,
+                                  List<SqlCompletionItem> items, List<CompletionFunction> functions, boolean dictionary) {
+        for (CompletionVariable variable : context.variables()) {
+            if (context.scope() == CompletionScope.COLUMN || context.scope() == CompletionScope.PROCEDURAL || context.scope() == CompletionScope.VARIABLE)
+                items.add(item(variable.name().name(), "VARIABLE", dialect.identifierInsertText(variable.name().name(), variable.name().quoted()),
+                        variable.type(), context, "parser", variable.name().name(), 10, null, false));
+        }
+        if (context.quotedPrefix() && !dictionary) return;
         if (context.scope() != CompletionScope.KEYWORD && context.scope() != CompletionScope.COLUMN
-                && context.scope() != CompletionScope.FUNCTION) return;
+                && context.scope() != CompletionScope.FUNCTION && context.scope() != CompletionScope.PROCEDURAL) return;
         if (context.scope() != CompletionScope.FUNCTION) {
-            for (String word : dialect.completionKeywords()) {
+            for (String word : dictionary ? dialect.completionKeywords() : context.keywords()) {
                 int rank = word.equals("SELECT") ? 100 : 110;
                 items.add(item(word, "KEYWORD", word, "DM keyword", context, "static", word, rank, null, false));
             }
         }
-        for (CompletionFunction function : dialect.functionTemplates()) {
-            boolean parentheses = followsParen(sql, context.replaceEnd());
-            items.add(item(function.name(), "FUNCTION", parentheses ? function.name() : function.insertText(),
-                    function.signature(), context, "static", function.name(), 120,
-                    function.signature(), function.snippet() && !parentheses));
-        }
-        if (context.scope() == CompletionScope.KEYWORD) {
+        addFunctions(context, sql, items, functions, dictionary);
+        if (context.scope() == CompletionScope.KEYWORD && (dictionary || context.keywords().contains("SELECT"))) {
             String[][] templates = {
                     {"sel", "SELECT ${2:*}\nFROM ${1:table};", "Select data from a table"},
                     {"selc", "SELECT COUNT(*)\nFROM ${1:table}\nWHERE ${2:condition};", "Select data from a table with a condition"},
@@ -114,22 +145,34 @@ public class SqlCompletionServiceImpl implements SqlCompletionService {
                     template[2], context, "static", template[0], 90, template[2], true));
         }
     }
+    private static void addFunctions(CompletionContext context, String sql, List<SqlCompletionItem> items,
+                                     List<CompletionFunction> functions, boolean dictionary) {
+        if (!dictionary && (context.quotedPrefix() || !(context.scope() == CompletionScope.FUNCTION
+                || context.scope() == CompletionScope.COLUMN && context.expressionPosition()))) return;
+        for (CompletionFunction function : functions) {
+            boolean parentheses = followsParen(sql, context.replaceEnd());
+            items.add(item(function.name(), "FUNCTION", parentheses ? function.name() : function.insertText(),
+                    function.signature(), context, "static", function.name(), 120,
+                    function.signature(), function.snippet() && !parentheses));
+        }
+    }
 
     private final class Candidates {
         final DbContext db;
         final String plugin;
         final Connection connection;
-        final Object metadataSession;
         final SqlCompleter dialect;
         final CompletionContext context;
         final String sql;
         final List<SqlCompletionItem> items;
         final DefaultPluginManager managers = DefaultPluginManager.getInstance();
+        final SqlCompletionMetadataResolver metadata;
         final Map<CompletionRelation, List<Field>> resolved = new IdentityHashMap<>();
         Candidates(DbContext db, String plugin, Object metadataSession, Connection connection, SqlCompleter dialect,
                    CompletionContext context, String sql, List<SqlCompletionItem> items) {
-            this.db = db; this.plugin = plugin; this.connection = connection; this.dialect = dialect;
-            this.metadataSession = metadataSession;
+            this.db = new DbContext(db.connectionId(), db.catalog(), dialect.completionSchema(connection, db.schema()));
+            this.plugin = plugin; this.connection = connection; this.dialect = dialect;
+            this.metadata = new SqlCompletionMetadataResolver(plugin, metadataSession, connection, dialect, cache);
             this.context = context; this.sql = sql; this.items = items;
         }
         void build() {
@@ -138,11 +181,17 @@ public class SqlCompletionServiceImpl implements SqlCompletionService {
                 case JOIN -> { tables(db, true); joins(); }
                 case QUALIFIED -> qualified();
                 case COLUMN, INSERT_COLUMN, UPDATE_COLUMN -> {
-                    columns(context.relations(), false);
-                    if (context.scope() == CompletionScope.COLUMN) routines(false);
+                    if (context.expressionPosition() && context.clause().equals("ORDER") && context.currentQuery() != null) {
+                        for (Field field : queryFields(context.currentQuery(), 0)) add(field.id().name(), "COLUMN", name(field.id()),
+                                (field.type() == null ? "" : field.type() + " · ") + "SELECT", "parser", field.id().name(), 0, field.remarks(), false);
+                    }
+                    if (context.scope() != CompletionScope.COLUMN || context.expressionPosition()) {
+                        if (!(context.clause().equals("VALUES") && context.statement().equals("INSERT"))) columns(context.relations(), false);
+                    }
+                    if (context.scope() == CompletionScope.COLUMN && context.expressionPosition()) { routines(false); packages(db); }
                 }
-                case FUNCTION -> routines(false);
-                case PROCEDURE -> routines(true);
+                case FUNCTION -> { routines(false); packages(db); }
+                case PROCEDURE, PROCEDURAL -> { routines(true); packages(db); }
                 default -> { }
             }
         }
@@ -150,7 +199,7 @@ public class SqlCompletionServiceImpl implements SqlCompletionService {
         String name(CompletionIdentifier value) { return dialect.identifierInsertText(value.name(), value.quoted()); }
         DbContext schema(String value) { return new DbContext(db.connectionId(), db.catalog(), value); }
         <T> List<T> cached(DbContext context, String kind, String object, Supplier<List<T>> loader) {
-            return quietly(() -> cache.get(plugin, context, kind, object, metadataSession, loader));
+            return metadata.cached(context, kind, object, loader);
         }
         List<Field> resolve(CompletionRelation relation, int depth) {
             if (depth > 32) return List.of();
@@ -162,12 +211,38 @@ public class SqlCompletionServiceImpl implements SqlCompletionService {
             } else if (relation.table() != null) {
                 CompletionTableRef table = relation.table();
                 DbContext source = schema(table.schema() == null ? db.schema() : table.schema());
-                fields = cached(source, "columns", table.name(), () -> managers.getColumnManagerByPluginId(plugin)
-                        .getColumns(connection, source.catalog(), source.schema(), table.name())).stream()
+                fields = metadata.columns(source, table.name()).stream()
                         .map(c -> new Field(new CompletionIdentifier(c.name(), false), c.typeName(), c.remarks())).toList();
             } else fields = List.of();
             resolved.put(relation, fields);
             return fields;
+        }
+        void packages(DbContext source) {
+            for (String name : packageNames(source))
+                add(name,"PACKAGE",name(name),"package · " + source.schema(),"metadata",name,45,null,false);
+            for (CompletionSynonym alias : metadata.visibleSynonyms(source, Set.of("PACKAGE"), context.prefix(), context.quotedPrefix())) {
+                CompletionSynonym target = metadata.localTarget(source, alias.name());
+                if (target != null && SqlCompletionMetadataResolver.accepts(target, Set.of("PACKAGE")) && packageNames(schema(target.targetSchema())).contains(target.targetName()))
+                    add(alias.name(),"SYNONYM",name(alias.name()),"package · " + target.targetSchema() + "." + target.targetName(),"metadata",alias.name(),45,null,false);
+            }
+        }
+        List<String> packageNames(DbContext source) {
+            return metadata.packages(source);
+        }
+        boolean packageMembers(DbContext source, String packageName) {
+            if (!packageNames(source).contains(packageName)) {
+                CompletionSynonym synonym = metadata.localTarget(source, packageName);
+                if (synonym == null || !SqlCompletionMetadataResolver.accepts(synonym, Set.of("PACKAGE")) || !packageNames(schema(synonym.targetSchema())).contains(synonym.targetName())) return false;
+                source = schema(synonym.targetSchema()); packageName = synonym.targetName();
+            }
+            final DbContext owner = source; final String pkg = packageName;
+            boolean procedures = context.statement().equals("CALL") || context.statement().equals("EXECUTE")
+                    || context.procedural() && context.clause().isEmpty() && !context.expressionPosition();
+            for (CompletionRoutine member : cached(owner,"package-members",pkg,() -> dialect.completionPackageMembers(connection,owner.schema(),pkg))) {
+                if (member.procedure() != procedures) continue;
+                routine(member.name(),member.parameters(),member.returnType(),member.procedure());
+            }
+            return true;
         }
         List<Field> queryFields(CompletionQuery query, int depth) {
             if (query == null || depth > 32) return List.of();
@@ -208,6 +283,12 @@ public class SqlCompletionServiceImpl implements SqlCompletionService {
                     .getViews(connection, source.catalog(), source.schema()))) {
                 add(view, "VIEW", name(view), "view · " + source.schema(), "metadata", view, 21, null, false);
             }
+            for (CompletionSynonym synonym : metadata.visibleSynonyms(source, Set.of("TABLE", "VIEW"), context.prefix(), context.quotedPrefix())) {
+                CompletionSynonym target = synonym.targetType().equals("SYNONYM") ? metadata.localTarget(source, synonym.name()) : synonym;
+                if (target != null && (target.targetType().isBlank() || Set.of("TABLE","VIEW").contains(target.targetType())))
+                    add(synonym.name(),"SYNONYM",name(synonym.name()),target.targetSchema() + "." + target.targetName(),
+                            "metadata",synonym.name(),22,null,false);
+            }
             if (ctes && managers.supportsSchemaByPluginId(plugin)) {
                 for (String value : cached(db, "schemas", null, () -> managers.getSchemaManagerByPluginId(plugin)
                         .getSchemas(connection, db.catalog()))) add(value, "SCHEMA", name(value), "schema",
@@ -217,6 +298,7 @@ public class SqlCompletionServiceImpl implements SqlCompletionService {
         void qualified() {
             if (context.qualifiedTable() != null) {
                 var table = context.qualifiedTable();
+                if (!context.clause().equals("FROM") && packageMembers(schema(table.schema()),table.name())) return;
                 columns(List.of(new CompletionRelation(new CompletionIdentifier(table.name(), false),
                         table, null, false, false)), true);
                 return;
@@ -226,17 +308,28 @@ public class SqlCompletionServiceImpl implements SqlCompletionService {
             CompletionRelation bound = context.relations().stream()
                     .filter(r -> r.qualifier().name().equals(qualifier)).findFirst().orElse(null);
             if (bound != null) { columns(List.of(bound), true); return; }
+            CompletionVariable record = context.variables().stream().filter(v -> v.name().name().equals(qualifier)).findFirst().orElse(null);
+            if (record != null) {
+                if (record.rowSource() != null) columns(List.of(new CompletionRelation(record.name(),record.rowSource(),null,false,true)),true);
+                else if (record.query() != null) for (Field field : queryFields(record.query(),0))
+                    add(field.id().name(),"COLUMN",name(field.id()),Objects.toString(field.type(),"") + " · " + qualifier,"parser",field.id().name(),0,field.remarks(),false);
+                else for (CompletionVariable field : record.fields()) add(field.name().name(),"COLUMN",name(field.name()),
+                        field.type() + " · " + qualifier,"parser",field.name().name(),0,null,false);
+                return;
+            }
             if (context.commonTables().containsKey(qualifier)) {
                 columns(List.of(new CompletionRelation(new CompletionIdentifier(qualifier, false), null,
                         context.commonTables().get(qualifier), true, false)), true);
                 return;
             }
+            if (!context.clause().equals("FROM") && packageMembers(db,qualifier)) return;
             // Do not perform a case-insensitive fallback for quoted names.
             if (context.selectList()) columns(List.of(new CompletionRelation(new CompletionIdentifier(qualifier, false),
                     new CompletionTableRef(null, qualifier), null, false, false)), true);
             tables(schema(qualifier), false);
-            routines(schema(qualifier), false);
-            routines(schema(qualifier), true);
+            if (!context.clause().equals("FROM")) {
+                packages(schema(qualifier)); routines(schema(qualifier), false); routines(schema(qualifier), true);
+            }
         }
         void columns(List<CompletionRelation> relations, boolean qualified) {
             Map<String, Integer> owners = new HashMap<>();
@@ -254,7 +347,7 @@ public class SqlCompletionServiceImpl implements SqlCompletionService {
                     if (assignment) insertion = snippetLiteral(insertion) + " = ${1:value}";
                     String detail = (field.type() == null ? "" : field.type() + " · ") + relation.qualifier().name();
                     add(field.id().name(), "COLUMN", insertion, detail, relation.logical() ? "parser" : "metadata",
-                            field.id().name(), 0, field.remarks(), assignment);
+                            field.id().name(), 1, field.remarks(), assignment);
                 }
                 if (!qualified && context.scope() == CompletionScope.COLUMN && relation.aliased())
                     add(relation.qualifier().name(), "ALIAS", name(relation.qualifier()), "table alias", "parser",
@@ -270,15 +363,32 @@ public class SqlCompletionServiceImpl implements SqlCompletionService {
             routines(db, procedure);
         }
         void routines(DbContext source, boolean procedure) {
+            Set<String> realNames = new HashSet<>();
             if (procedure) {
                 for (ProcedureMetadata value : cached(source, "procedures", null, () -> managers.getProcedureManagerByPluginId(plugin)
-                        .getProcedures(connection, source.catalog(), source.schema()))) routine(value.name(), value.parameters(), null, true);
+                        .getProcedures(connection, source.catalog(), source.schema()))) { realNames.add(value.name()); routine(value.name(), value.parameters(), null, true); }
             } else {
                 for (FunctionMetadata value : cached(source, "functions", null, () -> managers.getFunctionManagerByPluginId(plugin)
-                        .getFunctions(connection, source.catalog(), source.schema()))) routine(value.name(), value.parameters(), value.returnType(), false);
+                        .getFunctions(connection, source.catalog(), source.schema()))) { realNames.add(value.name()); routine(value.name(), value.parameters(), value.returnType(), false); }
+            }
+            for (CompletionSynonym alias : metadata.visibleSynonyms(source, Set.of(procedure ? "PROCEDURE" : "FUNCTION"), context.prefix(), context.quotedPrefix())) {
+                if (realNames.contains(alias.name())) continue;
+                CompletionSynonym target = metadata.localTarget(source, alias.name());
+                if (target == null || !SqlCompletionMetadataResolver.accepts(target, Set.of(procedure ? "PROCEDURE" : "FUNCTION"))) continue;
+                DbContext owner = schema(target.targetSchema());
+                if (procedure) {
+                    for (ProcedureMetadata value : cached(owner,"procedures",null,() -> managers.getProcedureManagerByPluginId(plugin).getProcedures(connection,owner.catalog(),owner.schema())))
+                        if (value.name().equals(target.targetName())) routine(alias.name(),value.parameters(),null,true,"synonym · ");
+                } else {
+                    for (FunctionMetadata value : cached(owner,"functions",null,() -> managers.getFunctionManagerByPluginId(plugin).getFunctions(connection,owner.catalog(),owner.schema())))
+                        if (value.name().equals(target.targetName())) routine(alias.name(),value.parameters(),value.returnType(),false,"synonym · ");
+                }
             }
         }
         void routine(String value, List<ParameterInfo> parameters, String returnType, boolean procedure) {
+            routine(value,parameters,returnType,procedure,"");
+        }
+        void routine(String value, List<ParameterInfo> parameters, String returnType, boolean procedure, String prefix) {
             String args = parameters == null ? "${1:}" : java.util.stream.IntStream.range(0, parameters.size())
                     .mapToObj(i -> "${" + (i+1) + ":" + snippetLiteral(Objects.toString(parameters.get(i).name(), "arg" + (i+1))) + "}")
                     .collect(java.util.stream.Collectors.joining(", "));
@@ -287,7 +397,7 @@ public class SqlCompletionServiceImpl implements SqlCompletionService {
                     + (returnType == null ? "" : " → " + returnType);
             boolean snippet = !followsParen(sql, context.replaceEnd());
             add(value, procedure ? "PROCEDURE" : "FUNCTION", (snippet ? snippetLiteral(name(value)) : name(value)) + (snippet ? "(" + args + ")" : ""),
-                    signature, "metadata", value, 50, signature, snippet);
+                    prefix + signature, "metadata", value, 50, prefix + signature, snippet);
         }
         void joins() {
             for (var source : context.relations()) {
@@ -343,9 +453,6 @@ public class SqlCompletionServiceImpl implements SqlCompletionService {
     }
     private record Field(CompletionIdentifier id, String type, String remarks) {}
     private record ForeignJoin(String schema, String table, String name, List<String> columns, List<String> referencedColumns) {}
-    private static <T> List<T> quietly(Supplier<List<T>> action) {
-        try { return action.get(); } catch (RuntimeException e) { log.debug("Completion metadata unavailable: {}", e.getMessage()); return List.of(); }
-    }
     private static boolean followsParen(String sql, int end) { return end <= sql.length() && sql.substring(end).stripLeading().startsWith("("); }
     private static String snippetLiteral(String text) { return text.replace("\\", "\\\\").replace("$", "\\$").replace("}", "\\}"); }
     private static SqlCompletionItem item(String label, String kind, String insert, String detail, CompletionContext context,
@@ -361,7 +468,9 @@ public class SqlCompletionServiceImpl implements SqlCompletionService {
             String filter = context.quotedPrefix() ? value.filterText().substring(1, value.filterText().length()-1).replace("\"\"", "\"") : value.filterText();
             boolean matches = context.quotedPrefix() ? filter.startsWith(prefix)
                     : value.filterText().regionMatches(true, 0, prefix, 0, prefix.length());
-            if (matches) unique.putIfAbsent(List.of(value.kind(), value.insertText(), value.replaceStart(), value.replaceEnd()), value);
+            if (matches) unique.putIfAbsent(List.of(value.kind(), value.insertText(),
+                    Set.of("FUNCTION","PROCEDURE").contains(value.kind()) ? Objects.toString(value.detail(),"") : "",
+                    value.replaceStart(), value.replaceEnd()), value);
         }
         List<SqlCompletionItem> sorted = unique.values().stream().sorted(Comparator.comparingInt(SqlCompletionItem::rank)
                 .thenComparing(SqlCompletionItem::label, String.CASE_INSENSITIVE_ORDER).thenComparing(SqlCompletionItem::insertText)).toList();
