@@ -2,7 +2,7 @@ import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useSta
 import { useTranslation } from 'react-i18next';
 import { KeyRound } from 'lucide-react';
 import { I18N_KEYS } from '../../constants/i18nKeys';
-import { tableService, type ErDiagram, type ErTable } from '../../services/table.service';
+import { tableService, type ErDiagram, type ErRelation, type ErTable } from '../../services/table.service';
 import { useWorkspaceStore } from '../../store/workspaceStore';
 import { TableDblClickConsoleTargetEnum } from '../../constants/workspacePreferences';
 import type { ConsoleTabMetadata, ErDiagramTabMetadata } from '../../types/tab';
@@ -69,6 +69,7 @@ interface RelationLine {
   d: string;
   cross: boolean;
   manyToMany: boolean;
+  dimmed: boolean;
   fromMark: EndMark;
   toMark: EndMark;
 }
@@ -205,8 +206,15 @@ function revealRow(row: HTMLElement, scale: number, skipScroller: HTMLElement | 
 function endpoint(canvas: HTMLElement, row: HTMLElement, edge: 'left' | 'right', scale: number) {
   const canvasRect = canvas.getBoundingClientRect();
   const rowRect = row.getBoundingClientRect();
+  const scroller = row.parentElement?.getBoundingClientRect();
+  let centerY = rowRect.top + rowRect.height / 2;
+  if (scroller) {
+    const minY = scroller.top + rowRect.height / 2;
+    const maxY = scroller.bottom - rowRect.height / 2;
+    if (maxY > minY) centerY = Math.min(maxY, Math.max(minY, centerY));
+  }
   const x = (edge === 'right' ? rowRect.right : rowRect.left) - canvasRect.left;
-  const y = rowRect.top + rowRect.height / 2 - canvasRect.top;
+  const y = centerY - canvasRect.top;
   return {
     x: Math.round((x / scale + (edge === 'right' ? 2 : -2)) * 10) / 10,
     y: Math.round((y / scale) * 10) / 10,
@@ -344,6 +352,23 @@ function routeAroundCards(fromBox: CardBox, toBox: CardBox, from: Point, to: Poi
   return points;
 }
 
+function pairLaneOffsets(relations: ErRelation[], spread: number) {
+  const keys = relations.map((relation) => {
+    const fromId = relationFromId(relation);
+    const toId = relationToId(relation);
+    return fromId < toId ? `${fromId}\0${toId}` : `${toId}\0${fromId}`;
+  });
+  const counts = new Map<string, number>();
+  keys.forEach((key) => counts.set(key, (counts.get(key) ?? 0) + 1));
+  const seen = new Map<string, number>();
+  return keys.map((key) => {
+    const index = seen.get(key) ?? 0;
+    seen.set(key, index + 1);
+    const lane = index - ((counts.get(key) ?? 1) - 1) / 2;
+    return Math.max(-10, Math.min(10, lane * spread));
+  });
+}
+
 function pointsToPath(points: Point[]) {
   if (points.length === 0) return '';
   const simplified = [points[0]];
@@ -387,6 +412,7 @@ export function ErDiagramTab({ metadata }: ErDiagramTabProps) {
   const [hover, setHover] = useState<ColumnFocus | null>(null);
   const [pinned, setPinned] = useState<ColumnFocus | null>(null);
   const [collapseJunctionTables, setCollapseJunctionTables] = useState(false);
+  const [showAllLines, setShowAllLines] = useState(false);
   const [lines, setLines] = useState<RelationLine[]>([]);
   const [positions, setPositions] = useState<Record<string, { x: number; y: number }>>({});
   const [draggingTableId, setDraggingTableId] = useState<string | null>(null);
@@ -416,6 +442,7 @@ export function ErDiagramTab({ metadata }: ErDiagramTabProps) {
     setHover(null);
     setPinned(null);
     setCollapseJunctionTables(false);
+    setShowAllLines(false);
     setTableNameFilter('');
     setExactTableFilter(false);
     setPositions({});
@@ -510,13 +537,14 @@ export function ErDiagramTab({ metadata }: ErDiagramTabProps) {
 
   const measureLines = useCallback((reveal: boolean) => {
     const canvas = canvasRef.current;
-    if (!canvas || !active || activeRelations.length === 0) {
+    const drawnRelations = showAllLines ? (shown?.relations ?? []) : activeRelations;
+    if (!canvas || drawnRelations.length === 0) {
       revealedFocusKey.current = null;
       setLines((current) => (current.length === 0 ? current : []));
       return;
     }
-    const focusKey = columnKey(active.tableId, active.column);
-    if (reveal) {
+    if (active && activeRelations.length > 0 && reveal) {
+      const focusKey = columnKey(active.tableId, active.column);
       const revealToken = `${focusKey}\0${activeRelations.map((relation, index) => (
         `${index}:${relationMapping(relation)}:${cardinalityLabel(relation)}`
       )).join('\0')}`;
@@ -534,14 +562,18 @@ export function ErDiagramTab({ metadata }: ErDiagramTabProps) {
           if (row) revealRow(row, view.scale, skipScroller);
         });
       }
+    } else if (!active) {
+      revealedFocusKey.current = null;
     }
     const channels = buildChannels(layout?.boxes ?? []);
     const laneSpread = 8;
+    const laneOffsets = showAllLines ? pairLaneOffsets(drawnRelations, laneSpread) : null;
+    const focus = active ?? { tableId: '', column: '' };
     const next: RelationLine[] = [];
-    activeRelations.forEach((relation, index) => {
+    drawnRelations.forEach((relation, index) => {
       const fromId = relationFromId(relation);
       const toId = relationToId(relation);
-      const anchors = anchorColumns(relation, active);
+      const anchors = anchorColumns(relation, focus);
       const fromRow = rowRefs.current.get(columnKey(fromId, anchors.from));
       const toRow = rowRefs.current.get(columnKey(toId, anchors.to));
       const custom = positions[fromId] != null || positions[toId] != null;
@@ -551,8 +583,10 @@ export function ErDiagramTab({ metadata }: ErDiagramTabProps) {
       const edges = custom ? routeEdgesFree(fromBox, toBox) : routeEdges(fromBox, toBox);
       const from = endpoint(canvas, fromRow, edges.fromEdge, view.scale);
       const to = endpoint(canvas, toRow, edges.toEdge, view.scale);
-      const lane = index - (activeRelations.length - 1) / 2;
-      const laneOffset = Math.max(-10, Math.min(10, lane * laneSpread));
+      const lane = index - (drawnRelations.length - 1) / 2;
+      const laneOffset = laneOffsets
+        ? laneOffsets[index]
+        : Math.max(-10, Math.min(10, lane * laneSpread));
       const marks = endMarks(relation);
       const label = `${relationMapping(relation)} ${cardinalityLabel(relation)}`;
       next.push({
@@ -562,10 +596,12 @@ export function ErDiagramTab({ metadata }: ErDiagramTabProps) {
           : routeAroundCards(fromBox, toBox, from, to, channels, laneOffset)),
         cross: isCrossRelation(relation),
         manyToMany: relation.cardinality === 'MANY_TO_MANY',
+        dimmed: showAllLines && active != null && !activeRelations.includes(relation),
         fromMark: marks.from,
         toMark: marks.to,
       });
     });
+    next.sort((left, right) => Number(right.dimmed) - Number(left.dimmed));
     setLines((current) => {
       if (current.length === next.length && current.every((line, index) => (
         line.key === next[index].key
@@ -574,12 +610,13 @@ export function ErDiagramTab({ metadata }: ErDiagramTabProps) {
         && line.toMark === next[index].toMark
         && line.manyToMany === next[index].manyToMany
         && line.cross === next[index].cross
+        && line.dimmed === next[index].dimmed
       ))) {
         return current;
       }
       return next;
     });
-  }, [active, activeRelations, boxById, layout, layoutBoxById, positions, view.scale]);
+  }, [active, activeRelations, boxById, layout, layoutBoxById, positions, showAllLines, shown, view.scale]);
 
   useLayoutEffect(() => {
     measureLines(true);
@@ -865,6 +902,17 @@ export function ErDiagramTab({ metadata }: ErDiagramTabProps) {
           {shown && shown.tables.length > 0 && (
             <button
               type="button"
+              aria-pressed={showAllLines}
+              className={`rounded border px-2 py-0.5 disabled:opacity-40 ${showAllLines ? 'border-rose-500 text-rose-600' : 'theme-border theme-text-primary'}`}
+              disabled={shown.relations.length === 0}
+              onClick={() => setShowAllLines((current) => !current)}
+            >
+              {t(I18N_KEYS.EXPLORER.ER_DIAGRAM_SHOW_ALL_LINES)}
+            </button>
+          )}
+          {shown && shown.tables.length > 0 && (
+            <button
+              type="button"
               className="rounded border theme-border px-2 py-0.5 theme-text-primary"
               onClick={fitToWindow}
             >
@@ -1005,6 +1053,7 @@ export function ErDiagramTab({ metadata }: ErDiagramTabProps) {
                   strokeDasharray={line.cross ? '5 4' : undefined}
                   strokeLinejoin="round"
                   strokeLinecap="round"
+                  opacity={line.dimmed ? 0.28 : 1}
                   markerStart={`url(#${markerPrefix}-${line.fromMark}${line.manyToMany ? '-many' : ''})`}
                   markerEnd={`url(#${markerPrefix}-${line.toMark}${line.manyToMany ? '-many' : ''})`}
                 />
