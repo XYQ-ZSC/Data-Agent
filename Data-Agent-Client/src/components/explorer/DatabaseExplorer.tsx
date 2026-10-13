@@ -7,9 +7,19 @@ import { useDataViewActions } from '../../hooks/useDataViewActions';
 import { useDeleteActions } from '../../hooks/useDeleteActions';
 import { useRenameActions } from '../../hooks/useRenameActions';
 import { DataAttributes } from '../../constants/dataAttributes';
+import { EXPLORER_SQL_OBJECT_CHANGED, ExplorerNodeType, FolderName } from '../../constants/explorer';
+import type { ExplorerNode } from '../../types/explorer';
 import { ExplorerHeader } from './ExplorerHeader';
 import { ExplorerTree } from './ExplorerTree';
 import { ExplorerDialogs } from './ExplorerDialogs';
+import { ExportDataDialog } from './ExportDataDialog';
+import type { ExportDataParams } from './ExportDataDialog';
+import { BatchExportDialog } from './BatchExportDialog';
+import type { BatchExportParams } from './BatchExportDialog';
+import { BatchImportDialog } from './BatchImportDialog';
+import type { BatchImportParams } from './BatchImportDialog';
+import { ImportDataDialog } from './ImportDataDialog';
+import type { ImportDataParams } from './ImportDataDialog';
 
 export function DatabaseExplorer() {
   const { supportedDbTypes, openTab } = useWorkspaceStore();
@@ -104,9 +114,115 @@ export function DatabaseExplorer() {
 
   const ddlConfig = getDdlConfig();
 
+  // Export data dialog
+  const [exportDialogOpen, setExportDialogOpen] = useState(false);
+  const [exportTargetPath, setExportTargetPath] = useState('');
+  const [exportParams, setExportParams] = useState<ExportDataParams | null>(null);
+  const handleExportData = (node: ExplorerNode) => {
+    const conn = node.dbConnection ?? connections.find((c) => String(c.id) === node.connectionId);
+    const catalog = node.catalog ?? conn?.database ?? '';
+    const tableName = node.objectName || node.name;
+    setExportTargetPath(`@${conn?.host ?? ''}/${catalog}/${tableName}`);
+    setExportParams({
+      connectionId: Number(node.connectionId),
+      tableName,
+      catalog: catalog || undefined,
+      schema: node.schema || undefined,
+    });
+    setExportDialogOpen(true);
+  };
+
+  // Batch export wizard (right-click the tables folder)
+  const [batchExportOpen, setBatchExportOpen] = useState(false);
+  const [batchExportTargetPath, setBatchExportTargetPath] = useState('');
+  const [batchExportParams, setBatchExportParams] = useState<BatchExportParams | null>(null);
+  const handleExportTablesWizard = (node: ExplorerNode) => {
+    const conn = node.dbConnection ?? connections.find((c) => String(c.id) === node.connectionId);
+    const catalog = node.catalog ?? conn?.database ?? '';
+    setBatchExportTargetPath(`@${conn?.host ?? ''}/${catalog}`);
+    setBatchExportParams({
+      connectionId: Number(node.connectionId),
+      catalog: catalog || undefined,
+      schema: node.schema || undefined,
+    });
+    setBatchExportOpen(true);
+  };
+
+  // Batch import wizard (right-click the tables folder)
+  const [batchImportOpen, setBatchImportOpen] = useState(false);
+  const [batchImportParams, setBatchImportParams] = useState<BatchImportParams | null>(null);
+  const handleImportTablesWizard = (node: ExplorerNode) => {
+    const conn = node.dbConnection ?? connections.find((c) => String(c.id) === node.connectionId);
+    const catalog = node.catalog ?? conn?.database ?? '';
+    setBatchImportParams({
+      connectionId: Number(node.connectionId),
+      catalog: catalog || undefined,
+      schema: node.schema || undefined,
+    });
+    setBatchImportOpen(true);
+  };
+
+  // Import data dialog
+  const [importDialogOpen, setImportDialogOpen] = useState(false);
+  const [importTargetPath, setImportTargetPath] = useState('');
+  const [importParams, setImportParams] = useState<ImportDataParams | null>(null);
+  const handleImportData = (node: ExplorerNode) => {
+    const conn = node.dbConnection ?? connections.find((c) => String(c.id) === node.connectionId);
+    const catalog = node.catalog ?? conn?.database ?? '';
+    const tableName = node.objectName || node.name;
+    setImportTargetPath(`@${conn?.host ?? ''}/${catalog}/${tableName}`);
+    setImportParams({
+      connectionId: Number(node.connectionId),
+      tableName,
+      catalog: catalog || undefined,
+      schema: node.schema || undefined,
+    });
+    setImportDialogOpen(true);
+  };
+
   useEffect(() => {
     useWorkspaceStore.getState().fetchSupportedDbTypes();
   }, []);
+
+  useEffect(() => {
+    const onSqlObjectChanged = (event: Event) => {
+      const detail = (event as CustomEvent<{
+        connectionId: number;
+        catalog?: string | null;
+        schema?: string | null;
+        objectType: string;
+      }>).detail;
+      const folderByType: Record<string, FolderName> = {
+        TABLE: FolderName.TABLES,
+        VIEW: FolderName.VIEWS,
+        FUNCTION: FolderName.ROUTINES,
+        PROCEDURE: FolderName.ROUTINES,
+        TRIGGER: FolderName.TRIGGERS,
+      };
+      const folderName = folderByType[detail.objectType];
+      const nodes: ExplorerNode[] = [];
+      const collect = (items: ExplorerNode[]) => {
+        for (const item of items) {
+          nodes.push(item);
+          if (item.children) collect(item.children);
+        }
+      };
+      collect(treeDataState);
+      const matchingScope = (node: ExplorerNode) =>
+        node.connectionId === String(detail.connectionId)
+        && (node.catalog ?? '') === (detail.catalog ?? '');
+      const folder = nodes.find(node =>
+        node.type === ExplorerNodeType.FOLDER && node.folderName === folderName
+        && matchingScope(node) && (node.schema ?? '') === (detail.schema ?? ''));
+      const schema = nodes.find(node =>
+        node.type === ExplorerNodeType.SCHEMA && matchingScope(node)
+        && node.name === detail.schema);
+      const target = folder ?? schema;
+      if (target) void refreshNodeById(target.id);
+    };
+    window.addEventListener(EXPLORER_SQL_OBJECT_CHANGED, onSqlObjectChanged);
+    return () => window.removeEventListener(EXPLORER_SQL_OBJECT_CHANGED, onSqlObjectChanged);
+  }, [treeDataState, refreshNodeById]);
 
   return (
     <div
@@ -145,6 +261,10 @@ export function DatabaseExplorer() {
           onDelete={handleDelete}
           onOpenQueryConsole={handleOpenQueryConsole}
           onCreateTable={handleCreateTable}
+          onImportData={handleImportData}
+          onExportData={handleExportData}
+          onExportTablesWizard={handleExportTablesWizard}
+          onImportTablesWizard={handleImportTablesWizard}
         />
       </div>
 
@@ -186,6 +306,33 @@ export function DatabaseExplorer() {
           if (node?.id) refreshNodeById(node.id);
         }}
         onConnectionSuccess={refetchConnections}
+      />
+
+      <ExportDataDialog
+        open={exportDialogOpen}
+        onOpenChange={setExportDialogOpen}
+        targetTablePath={exportTargetPath}
+        exportParams={exportParams}
+      />
+
+      <BatchExportDialog
+        open={batchExportOpen}
+        onOpenChange={setBatchExportOpen}
+        targetPath={batchExportTargetPath}
+        exportParams={batchExportParams}
+      />
+
+      <BatchImportDialog
+        open={batchImportOpen}
+        onOpenChange={setBatchImportOpen}
+        importParams={batchImportParams}
+      />
+
+      <ImportDataDialog
+        open={importDialogOpen}
+        onOpenChange={setImportDialogOpen}
+        targetTablePath={importTargetPath}
+        importParams={importParams}
       />
     </div>
   );

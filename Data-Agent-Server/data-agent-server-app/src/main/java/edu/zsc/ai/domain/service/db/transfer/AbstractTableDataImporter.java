@@ -1,0 +1,180 @@
+package edu.zsc.ai.domain.service.db.transfer;
+
+import edu.zsc.ai.domain.model.context.DbContext;
+import edu.zsc.ai.domain.model.dto.response.db.ImportTableDataResponse;
+import edu.zsc.ai.domain.service.db.ConnectionService;
+import edu.zsc.ai.domain.service.db.impl.ActiveConnectionRegistry;
+import edu.zsc.ai.plugin.capability.ColumnManager;
+import edu.zsc.ai.plugin.manager.DefaultPluginManager;
+import edu.zsc.ai.plugin.model.metadata.ColumnMetadata;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import java.io.IOException;
+import java.io.InputStream;
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.SQLException;
+import java.util.List;
+
+/**
+ * Template-method base class for table data importers. The skeleton lives here:
+ * open the connection, resolve table columns, let the subclass parse the file
+ * and validate headers, then run the batch-insert loop inside a single
+ * transaction with unified error handling. Subclasses only implement
+ * {@link #prepare} which returns a row-iterable {@link ImportSource}.
+ *
+ * <p>To add a new import format: create a class extending this base, implement
+ * {@link #fileType()} and {@link #prepare}, and annotate with {@code @Component}.
+ */
+public abstract class AbstractTableDataImporter implements TableDataImporter {
+
+    protected final Logger log = LoggerFactory.getLogger(getClass());
+
+    protected final ConnectionService connectionService;
+    protected final ImportPrepareSupport prepareSupport;
+    protected final ColumnValueConverter valueConverter;
+    protected final ImportBatchSupport batchSupport;
+
+    protected AbstractTableDataImporter(ConnectionService connectionService,
+                                        ImportPrepareSupport prepareSupport,
+                                        ColumnValueConverter valueConverter,
+                                        ImportBatchSupport batchSupport) {
+        this.connectionService = connectionService;
+        this.prepareSupport = prepareSupport;
+        this.valueConverter = valueConverter;
+        this.batchSupport = batchSupport;
+    }
+
+    @Override
+    public final ImportTableDataResponse importData(DbContext db, String tableName,
+                                                     InputStream inputStream, String encoding) {
+        connectionService.openConnection(db);
+
+        ActiveConnectionRegistry.ActiveConnection active = ActiveConnectionRegistry.getOwnedConnection(db);
+        ColumnManager columnManager = DefaultPluginManager.getInstance()
+                .getColumnManagerByPluginId(active.pluginId());
+
+        try (ActiveConnectionRegistry.BorrowedConnection borrowed = active.borrowConnection()) {
+            Connection connection = borrowed.connection();
+
+            ImportPrepareSupport.ResolvedTableColumns resolved =
+                    prepareSupport.resolveTableColumns(columnManager, connection, db, tableName);
+
+            try (ImportSource source = prepare(inputStream, encoding, resolved, tableName)) {
+                List<ColumnMetadata> targetColumns = source.targetColumns();
+                String identifierQuote = prepareSupport.resolveIdentifierQuote(connection);
+                String insertSql = prepareSupport.buildImportInsertSql(identifierQuote, tableName, targetColumns);
+                return runImportBatch(connection, insertSql, targetColumns, source, db, tableName);
+            }
+        } catch (ImportFailureException failure) {
+            // Header-phase validation failure from prepare()
+            log.warn("{} import failed at row {}: connectionId={}, tableName={}",
+                    fileType(), failure.fileRow(), db.connectionId(), tableName);
+            return ImportTableDataResponse.builder()
+                    .success(false)
+                    .totalRows(0)
+                    .insertedRows(0)
+                    .failedAtRow(failure.fileRow())
+                    .errorMessage(failure.getMessage())
+                    .build();
+        } catch (SQLException | IOException ex) {
+            throw new RuntimeException("Import " + fileType() + " failed: " + ex.getMessage(), ex);
+        }
+    }
+
+    /**
+     * Runs the batch-insert loop inside a single transaction (via
+     * {@link ImportBatchSupport#runInTransaction}). {@link ImportFailureException}
+     * is mapped to a structured failure response; any other error has already
+     * been rolled back and rethrown by the transaction template.
+     */
+    private ImportTableDataResponse runImportBatch(Connection connection, String insertSql,
+                                                   List<ColumnMetadata> targetColumns,
+                                                   ImportSource source,
+                                                   DbContext db, String tableName) throws SQLException {
+        int[] totalRowsHolder = new int[1]; // stays visible to the failure path below
+        try {
+            batchSupport.runInTransaction(connection, () -> {
+                try (PreparedStatement statement = connection.prepareStatement(insertSql)) {
+                    int batched = 0;
+                    int batchFirstRow = -1; // Lazily set to the first data row of each batch.
+                    while (source.hasNextRow()) {
+                        ImportRow row = source.nextRow();
+                        if (batchFirstRow < 0) {
+                            batchFirstRow = row.fileRowNumber();
+                        }
+                        totalRowsHolder[0]++;
+                        for (int i = 0; i < targetColumns.size(); i++) {
+                            valueConverter.setImportParameter(statement, i + 1,
+                                    targetColumns.get(i), row.valueAt(i), row.fileRowNumber());
+                        }
+                        statement.addBatch();
+                        batched++;
+
+                        if (batched >= TransferConstants.IMPORT_BATCH_SIZE) {
+                            batchSupport.executeImportBatch(statement, batchFirstRow);
+                            batched = 0;
+                            batchFirstRow = -1;
+                        }
+                    }
+                    if (batched > 0) {
+                        batchSupport.executeImportBatch(statement, batchFirstRow);
+                    }
+                    return totalRowsHolder[0];
+                }
+            });
+        } catch (ImportFailureException failure) {
+            log.warn("{} import failed at row {}: connectionId={}, tableName={}",
+                    fileType(), failure.fileRow(), db.connectionId(), tableName);
+            return ImportBatchSupport.failureResponse(failure.fileRow(), failure.getMessage(),
+                    totalRowsHolder[0]);
+        }
+
+        log.info("{} import completed: connectionId={}, tableName={}, totalRows={}",
+                fileType(), db.connectionId(), tableName, totalRowsHolder[0]);
+        return ImportTableDataResponse.builder()
+                .success(true)
+                .totalRows(totalRowsHolder[0])
+                .insertedRows(totalRowsHolder[0])
+                .build();
+    }
+
+    // --- Abstract methods ---
+
+    /**
+     * Parse the uploaded file, validate its header against the target table
+     * columns, and return a row-iterable source. The returned source's
+     * {@link ImportSource#targetColumns()} must return the mapped columns in
+     * the order they appear in the file header.
+     */
+    protected abstract ImportSource prepare(InputStream inputStream, String encoding,
+                                           ImportPrepareSupport.ResolvedTableColumns resolved,
+                                           String tableName) throws IOException;
+
+    // --- Shared types ---
+
+    /** A row-iterable source produced by {@link #prepare}. */
+    public interface ImportSource extends AutoCloseable {
+        /** Columns mapped from the file header, in file order. */
+        List<ColumnMetadata> targetColumns();
+
+        /** True if another data row is available. */
+        boolean hasNextRow() throws IOException;
+
+        /** Returns the next data row. */
+        ImportRow nextRow() throws IOException;
+
+        @Override
+        default void close() throws IOException {
+        }
+    }
+
+    /** One import data row: raw text values and the 1-based file row number. */
+    public record ImportRow(String[] values, int fileRowNumber) {
+        /** Returns the value at {@code index}, or {@code null} if out of bounds. */
+        public String valueAt(int index) {
+            return index < values.length ? values[index] : null;
+        }
+    }
+}

@@ -38,6 +38,10 @@ export interface ExplorerTreeNodeProps {
   onDelete: (node: ExplorerNode, type: ExplorerNodeType) => void;
   onOpenQueryConsole: (node: ExplorerNode) => void;
   onCreateTable: (node: ExplorerNode) => void;
+  onImportData: (node: ExplorerNode) => void;
+  onExportData: (node: ExplorerNode) => void;
+  onExportTablesWizard: (node: ExplorerNode) => void;
+  onImportTablesWizard: (node: ExplorerNode) => void;
 }
 
 export function ExplorerTreeNode({
@@ -57,6 +61,10 @@ export function ExplorerTreeNode({
   onDelete,
   onOpenQueryConsole,
   onCreateTable,
+  onImportData,
+  onExportData,
+  onExportTablesWizard,
+  onImportTablesWizard,
 }: ExplorerTreeNodeProps) {
   const { t } = useTranslation();
   const isConnected = !!node.data.connectionId;
@@ -231,6 +239,10 @@ export function ExplorerTreeNode({
           onViewData={onViewData}
           onRename={onRename}
           onDelete={onDelete}
+          onImportData={onImportData}
+          onExportData={onExportData}
+          onExportTablesWizard={onExportTablesWizard}
+          onImportTablesWizard={onImportTablesWizard}
         />
       </ContextMenu>
     );

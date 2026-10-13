@@ -1,4 +1,4 @@
-import { FileText, Pencil, Plus, Table, Table2, Trash2 } from 'lucide-react';
+import { Download, FileText, Pencil, Plus, Table, Table2, Trash2, Upload } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import {
   ContextMenuContent,
@@ -21,6 +21,10 @@ interface NodeContextMenuContentProps {
   onViewData: (node: ExplorerNode, highlightColumn?: string) => void;
   onRename: (node: ExplorerNode) => void;
   onDelete: (node: ExplorerNode, type: ExplorerNodeType) => void;
+  onImportData: (node: ExplorerNode) => void;
+  onExportData: (node: ExplorerNode) => void;
+  onExportTablesWizard: (node: ExplorerNode) => void;
+  onImportTablesWizard: (node: ExplorerNode) => void;
 }
 
 export function NodeContextMenuContent({
@@ -32,6 +36,10 @@ export function NodeContextMenuContent({
   onViewData,
   onRename,
   onDelete,
+  onImportData,
+  onExportData,
+  onExportTablesWizard,
+  onImportTablesWizard,
 }: NodeContextMenuContentProps) {
   const { t } = useTranslation();
 
@@ -102,6 +110,21 @@ export function NodeContextMenuContent({
         </>
       )}
 
+      {/* 1.5 Import/Export wizard - batch transfer tables from the tables folder */}
+      {isConnected && isTablesFolder && (
+        <>
+          <ContextMenuItem onSelect={() => onImportTablesWizard(node)}>
+            <Upload className="w-3.5 h-3.5 mr-2" />
+            {t(I18N_KEYS.EXPLORER.IMPORT_WIZARD)}
+          </ContextMenuItem>
+          <ContextMenuItem onSelect={() => onExportTablesWizard(node)}>
+            <Download className="w-3.5 h-3.5 mr-2" />
+            {t(I18N_KEYS.EXPLORER.EXPORT_WIZARD)}
+          </ContextMenuItem>
+          <ContextMenuSeparator />
+        </>
+      )}
+
       {/* 2. View DDL - for DDL objects */}
       {isDdlNode && (
         <>
@@ -132,6 +155,20 @@ export function NodeContextMenuContent({
         </>
       )}
       {isTableOrView || isColumnOrIndexOrKey ? (hasDataOperations = true) : null}
+
+      {/* 3.5 Import/Export Data - for tables (UI placeholder, functionality to be implemented later) */}
+      {node.type === ExplorerNodeType.TABLE && (
+        <>
+          <ContextMenuItem onSelect={() => onImportData(node)}>
+            <Upload className="w-3.5 h-3.5 mr-2" />
+            {t(I18N_KEYS.EXPLORER.IMPORT_DATA)}
+          </ContextMenuItem>
+          <ContextMenuItem onSelect={() => onExportData(node)}>
+            <Download className="w-3.5 h-3.5 mr-2" />
+            {t(I18N_KEYS.EXPLORER.EXPORT_DATA)}
+          </ContextMenuItem>
+        </>
+      )}
 
       {/* 4. Rename - for tables */}
       {node.type === ExplorerNodeType.TABLE && (
