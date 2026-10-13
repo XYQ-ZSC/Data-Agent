@@ -12,6 +12,8 @@ export interface ErDiagramInteraction {
   togglePin: (focus: ColumnFocus) => void;
   setHover: (focus: ColumnFocus) => void;
   clearHover: (focus: ColumnFocus) => void;
+  busy: boolean;
+  toggleExpanded: (nodeId: string) => void;
   openData: (table: ErTable) => void;
   openDdl: (table: ErTable) => void;
   openExternal: (table: ErTable) => void;
