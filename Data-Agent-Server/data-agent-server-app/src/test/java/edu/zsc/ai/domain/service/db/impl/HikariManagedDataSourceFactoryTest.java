@@ -5,6 +5,7 @@ import edu.zsc.ai.config.db.ConnectionPoolProperties;
 import edu.zsc.ai.domain.service.db.ManagedDataSourceFactory;
 import edu.zsc.ai.plugin.capability.ConnectionManager;
 import edu.zsc.ai.plugin.connection.ConnectionConfig;
+import edu.zsc.ai.plugin.connection.ConnectionFailureException;
 import org.junit.jupiter.api.Test;
 
 import java.sql.Connection;
@@ -23,6 +24,23 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 class HikariManagedDataSourceFactoryTest {
+
+    @Test
+    void create_preservesDmFailureCategoryThroughPoolInitialization() {
+        HikariManagedDataSourceFactory factory = new HikariManagedDataSourceFactory(new ConnectionPoolProperties());
+        ConnectionManager manager = mock(ConnectionManager.class);
+        ConnectionFailureException failure = new ConnectionFailureException(
+                ConnectionFailureException.Category.AUTHENTICATION, "28000", -2501, "bad credentials", null);
+        when(manager.connect(any())).thenThrow(failure);
+        ConnectionConfig config = new ConnectionConfig();
+        config.setHost("127.0.0.1");
+        ManagedDataSourceFactory.ManagedDataSourceRequest request =
+                new ManagedDataSourceFactory.ManagedDataSourceRequest(9L, "dm", null, "HR");
+
+        assertEquals(ConnectionFailureException.Category.AUTHENTICATION,
+                assertThrows(ConnectionFailureException.class,
+                        () -> factory.create(manager, config, request)).getCategory());
+    }
 
     @Test
     void create_appliesConfiguredPoolSettings() throws SQLException {

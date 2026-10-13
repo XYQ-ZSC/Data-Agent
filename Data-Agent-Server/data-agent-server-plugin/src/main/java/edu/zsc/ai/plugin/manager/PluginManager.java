@@ -6,6 +6,7 @@ import edu.zsc.ai.plugin.capability.CommandExecutor;
 import edu.zsc.ai.plugin.capability.FunctionManager;
 import edu.zsc.ai.plugin.capability.IndexManager;
 import edu.zsc.ai.plugin.capability.ProcedureManager;
+import edu.zsc.ai.plugin.capability.SqlCompleter;
 import edu.zsc.ai.plugin.capability.SqlSplitter;
 import edu.zsc.ai.plugin.capability.SqlAnalyzer;
 import edu.zsc.ai.plugin.capability.SqlValidator;
@@ -109,4 +110,12 @@ public interface PluginManager {
     boolean supportsSqlValidationByPluginId(@NotBlank String pluginId);
 
     SqlAnalyzer getSqlAnalyzerByPluginId(@NotBlank String pluginId);
+
+    /**
+     * Get the SqlCompleter for the given plugin, or null when the plugin does
+     * not implement SqlCompleter (completion is then unsupported).
+     */
+    SqlCompleter getSqlCompleterByPluginId(@NotBlank String pluginId);
+
+    boolean supportsSqlCompletionByPluginId(@NotBlank String pluginId);
 }

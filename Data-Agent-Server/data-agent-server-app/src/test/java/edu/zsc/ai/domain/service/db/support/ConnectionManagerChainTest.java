@@ -21,6 +21,20 @@ import static org.mockito.Mockito.when;
 class ConnectionManagerChainTest {
 
     @Test
+    void handle_preservesSingleManagerFailureCategory() {
+        ConnectionManager manager = mock(ConnectionManager.class);
+        ConnectionFailureException failure = new ConnectionFailureException(
+                ConnectionFailureException.Category.SCHEMA_SWITCH, "3F000", -2103, "schema denied", null);
+        when(manager.connect(any())).thenThrow(failure);
+
+        ConnectionFailureException result = assertThrows(ConnectionFailureException.class, () ->
+                ConnectionManagerChain.fromManagers(List.of(manager), ConnectionManager::connect)
+                        .handle(new ConnectionConfig()));
+
+        assertSame(failure, result);
+    }
+
+    @Test
     void fromManagers_rejectsEmptyManagerList() {
         assertThrows(IllegalArgumentException.class,
                 () -> ConnectionManagerChain.fromManagers(List.of(), (m, c) -> null));

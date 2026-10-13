@@ -6,6 +6,8 @@ import { viewService } from '../services/view.service';
 import { functionService } from '../services/function.service';
 import { procedureService } from '../services/procedure.service';
 import { triggerService } from '../services/trigger.service';
+import { sequenceService } from '../services/sequence.service';
+import { constraintService } from '../services/constraint.service';
 import { useWorkspaceStore } from '../store/workspaceStore';
 import { TableDblClickConsoleTargetEnum, TableDblClickModeEnum } from '../constants/workspacePreferences';
 import { I18N_KEYS } from '../constants/i18nKeys';
@@ -208,6 +210,12 @@ export function useDataViewActions({
         case ExplorerNodeType.TRIGGER:
           loadDdl = () => triggerService.getTriggerDdl(String(consoleContext.connectionId), objectName, catalog, schema);
           break;
+        case ExplorerNodeType.SEQUENCE:
+          loadDdl = () => sequenceService.getSequenceDdl(String(consoleContext.connectionId), objectName, catalog, schema);
+          break;
+        case ExplorerNodeType.CONSTRAINT:
+          loadDdl = () => constraintService.getConstraintDdl(String(consoleContext.connectionId), objectName, catalog, schema);
+          break;
         default:
           return;
       }
@@ -336,6 +344,18 @@ export function useDataViewActions({
           displayName,
           loadDdl: () => triggerService.getTriggerDdl(connId, objectName, catalog, schema),
         };
+      case ExplorerNodeType.SEQUENCE:
+        return {
+          title: t('explorer.sequence_ddl_title'),
+          displayName,
+          loadDdl: () => sequenceService.getSequenceDdl(connId, objectName, catalog, schema),
+        };
+      case ExplorerNodeType.CONSTRAINT:
+        return {
+          title: t('explorer.constraint_ddl_title'),
+          displayName,
+          loadDdl: () => constraintService.getConstraintDdl(connId, objectName, catalog, schema),
+        };
       default:
         return null;
     }
@@ -346,12 +366,37 @@ export function useDataViewActions({
     setCreateTableDialogOpen(true);
   }, [setSelectedCreateTableNode, setCreateTableDialogOpen]);
 
+  const handleOpenErDiagram = useCallback((node: ExplorerNode) => {
+    if (!node.connectionId) return;
+    const connectionId = Number(node.connectionId);
+    const connection = node.dbConnection ?? getConnection(connectionId);
+    const catalog = node.catalog ?? '';
+    const schema = node.schema ?? '';
+    const scope = schema || catalog || node.name;
+    openTab({
+      id: `er-${connectionId}-${catalog}-${schema}`,
+      name: `ER ${scope}`,
+      type: 'er',
+      content: '',
+      metadata: {
+        connectionId,
+        dbType: connection?.dbType,
+        connectionName: connection?.name || 'Unknown',
+        databaseName: catalog || schema || null,
+        schemaName: schema || null,
+        catalog: catalog || null,
+        schema: schema || null,
+      },
+    });
+  }, [getConnection, openTab]);
+
   return {
     handleViewDdl,
     handleViewData,
     handleTableOrViewDoubleClick,
     handleOpenQueryConsole,
     handleCreateTable,
+    handleOpenErDiagram,
     getDdlConfig,
   };
 }

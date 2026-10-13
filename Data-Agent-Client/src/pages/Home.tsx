@@ -5,12 +5,13 @@ import { MonacoEditor, type MonacoEditorHandle } from "../components/editor/Mona
 import { ResultsPanel } from "../components/results/ResultsPanel";
 import { Toolbar } from "../components/workspace/Toolbar";
 import { TableDataTab } from "../components/workspace/TableDataTab";
+import { ErDiagramTab } from "../components/workspace/ErDiagramTab";
 import { EmptyState } from "../components/workspace/EmptyState";
 import { PlanConsole } from "../components/plan/PlanConsole";
 import { SubAgentConsole } from "../components/subagent/SubAgentConsole";
 import { useWorkspaceStore } from "../store/workspaceStore";
-import type { TableTabMetadata, PlanTabMetadata, SubAgentConsoleTabMetadata } from "../types/tab";
-import type { ExecuteSqlResponse, SqlSyntaxError } from "../types/sql";
+import type { TableTabMetadata, PlanTabMetadata, SubAgentConsoleTabMetadata, ErDiagramTabMetadata } from "../types/tab";
+import type { ExecuteSqlResponse, SqlBatchMode, SqlSyntaxError } from "../types/sql";
 import { sqlExecutionService } from "../services/sqlExecution.service";
 import { sqlAnalysisService } from "../services/sqlAnalysis.service";
 import { connectionService } from "../services/connection.service";
@@ -24,13 +25,19 @@ export default function Home() {
     const { tabs, activeTabId, updateTabContent, updateTabMetadata } = useWorkspaceStore();
     const [isResultsVisible, setIsResultsVisible] = useState(false);
     const [executeResult, setExecuteResult] = useState<ExecuteSqlResponse | null>(null);
+    const [scriptResults, setScriptResults] = useState<ExecuteSqlResponse[]>([]);
+    const [scriptMode, setScriptMode] = useState<SqlBatchMode>('ATOMIC');
+    const [timeoutSeconds, setTimeoutSeconds] = useState(30);
+    const [maxRows, setMaxRows] = useState(10000);
+    const executionIdRef = useRef<string | null>(null);
+    const [cancelStatus, setCancelStatus] = useState<string | null>(null);
     const editorRef = useRef<MonacoEditorHandle | null>(null);
     const [isRunning, setIsRunning] = useState(false);
     const [connectionType, setConnectionType] = useState<{ id: number; dbType: string } | null>(null);
     const [diagnostics, setDiagnostics] = useState<SqlSyntaxError[]>([]);
 
     const activeTab = tabs.find(t => t.id === activeTabId);
-    const isSpecialTab = activeTab?.type === 'plan' || activeTab?.type === 'subagent-console';
+    const isSpecialTab = activeTab?.type === 'plan' || activeTab?.type === 'subagent-console' || activeTab?.type === 'er';
     const sqlContext = !isSpecialTab
         ? activeTab?.metadata as import('../types/tab').ConsoleTabMetadata | undefined
         : undefined;
@@ -85,22 +92,33 @@ export default function Home() {
         if (!sql || !sqlContext?.connectionId) return;
 
         setIsRunning(true);
+        setCancelStatus(null);
+        const executionId = crypto.randomUUID();
+        executionIdRef.current = executionId;
         setExecuteResult(null);
+        setScriptResults([]);
         setIsResultsVisible(true);
 
         try {
-            const result = await sqlExecutionService.executeSql({
+            const results = await sqlExecutionService.executeScript({
                 connectionId: sqlContext.connectionId,
                 databaseName: sqlContext.databaseName ?? undefined,
                 schemaName: sqlContext.schemaName ?? undefined,
                 sql,
+                mode: scriptMode,
+                timeoutMs: timeoutSeconds * 1000,
+                maxRows,
+                executionId,
             });
+            setScriptResults(results);
+            const result = results[0];
+            if (!result) throw new Error('The script contained no executable statements');
             setExecuteResult({
                 ...result,
                 originalSql: result.originalSql || sql,
                 executedSql: result.executedSql || sql,
             });
-            if (result.success && connectionType?.id === sqlContext.connectionId
+            if (results.some(item => item.success) && connectionType?.id === sqlContext.connectionId
                 && connectionType.dbType.toUpperCase() === 'DM') {
                 sqlAnalysisService.analyze({
                     connectionId: sqlContext.connectionId,
@@ -108,17 +126,18 @@ export default function Home() {
                     schemaName: sqlContext.schemaName,
                     sql,
                 }).then(analysis => {
-                    if (analysis.errors.length || analysis.statements.length !== 1) return;
-                    const statement = analysis.statements[0];
-                    if (['CREATE', 'ALTER', 'DROP'].includes(statement.type) && statement.objectType) {
-                        window.dispatchEvent(new CustomEvent(EXPLORER_SQL_OBJECT_CHANGED, {
-                            detail: {
-                                connectionId: sqlContext.connectionId,
-                                catalog: sqlContext.databaseName,
-                                schema: sqlContext.schemaName,
-                                objectType: statement.objectType,
-                            },
-                        }));
+                    if (analysis.errors.length) return;
+                    for (const [index, statement] of analysis.statements.entries()) {
+                        if (results[index]?.success && ['CREATE', 'ALTER', 'DROP', 'TRUNCATE'].includes(statement.type) && statement.objectType) {
+                            window.dispatchEvent(new CustomEvent(EXPLORER_SQL_OBJECT_CHANGED, {
+                                detail: {
+                                    connectionId: sqlContext.connectionId,
+                                    catalog: sqlContext.databaseName,
+                                    schema: sqlContext.schemaName,
+                                    objectType: statement.objectType,
+                                },
+                            }));
+                        }
                     }
                 }).catch(() => undefined);
             }
@@ -133,9 +152,27 @@ export default function Home() {
                 affectedRows: 0,
             });
         } finally {
+            executionIdRef.current = null;
             setIsRunning(false);
         }
-    }, [activeTab, connectionType, sqlContext]);
+    }, [activeTab, connectionType, sqlContext, scriptMode, timeoutSeconds, maxRows]);
+
+    const handleStop = useCallback(async () => {
+        if (!executionIdRef.current || !sqlContext?.connectionId) return;
+        try {
+            const outcome = await sqlExecutionService.cancelExecution({
+                connectionId: sqlContext.connectionId,
+                databaseName: sqlContext.databaseName,
+                schemaName: sqlContext.schemaName,
+                executionId: executionIdRef.current,
+            });
+            setCancelStatus(outcome === 'CANCEL_REQUESTED' ? 'Cancel requested; waiting for database confirmation'
+                : outcome === 'CANCEL_FAILED' ? 'Cancel request failed; query may still be running'
+                    : 'No active database statement to cancel');
+        } catch (error) {
+            setCancelStatus(`Cancel request failed: ${String(error)}`);
+        }
+    }, [sqlContext]);
 
     // SQL Editor Shortcuts
     useEffect(() => {
@@ -170,12 +207,18 @@ export default function Home() {
                         metadata={activeTab.metadata as SubAgentConsoleTabMetadata}
                     />
                 </div>
+            ) : activeTab?.type === 'er' && activeTab.metadata ? (
+                <div className="flex-1 min-h-0 overflow-hidden bg-transparent">
+                    <ErDiagramTab metadata={activeTab.metadata as ErDiagramTabMetadata} />
+                </div>
             ) : (
                 <ResultsPanel
                     isVisible={isResultsVisible}
                     onClose={() => setIsResultsVisible(false)}
                     executeResult={executeResult}
+                    scriptResults={scriptResults}
                     isRunning={isRunning}
+                    cancelStatus={cancelStatus}
                 >
                     <div className="flex-1 flex flex-col min-h-0 relative bg-transparent">
                         {activeTab?.type === 'file' && (
@@ -183,8 +226,15 @@ export default function Home() {
                                 <Toolbar
                                     onRun={handleRunQuery}
                                     onFormat={connectionType && connectionType.id === sqlContext?.connectionId ? handleFormatSql : undefined}
-                                    onStop={() => setIsRunning(false)}
+                                    onStop={handleStop}
                                     isRunning={isRunning}
+                                    scriptMode={scriptMode}
+                                    onScriptModeChange={setScriptMode}
+                                    timeoutSeconds={timeoutSeconds}
+                                    onTimeoutSecondsChange={setTimeoutSeconds}
+                                    maxRows={maxRows}
+                                    onMaxRowsChange={setMaxRows}
+                                    showTransactionControls={connectionType?.dbType.toUpperCase() !== 'DM'}
                                     connectionId={sqlContext?.connectionId}
                                     currentDatabase={sqlContext?.databaseName}
                                     onDatabaseChange={(db) =>
@@ -201,6 +251,11 @@ export default function Home() {
                                         ref={editorRef}
                                         value={activeTab.content || ''}
                                         diagnostics={diagnostics}
+                                        completionContext={{
+                                            connectionId: sqlContext?.connectionId,
+                                            databaseName: sqlContext?.databaseName,
+                                            schemaName: sqlContext?.schemaName,
+                                        }}
                                         onChange={(val) => updateTabContent(activeTab.id, val || '')}
                                     />
                                 ) : activeTab?.type === 'table' && activeTab.metadata ? (

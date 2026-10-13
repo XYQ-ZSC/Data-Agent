@@ -389,7 +389,7 @@ class DmLiveTypeRoundTripTest {
     }
 
     @Test
-    void smallBlobPreviewIsCompleteBase64ButNotWritable() throws Exception {
+    void smallBlobPreviewIsCompleteBase64AndWritable() throws Exception {
         try (Connection conn = connect(); DmLiveTestRun run = DmLiveTestRun.start(conn, SCHEMA, NAMESPACE)) {
             run.sweepStaleRunObjects();
             String t = run.name("BLS");
@@ -416,8 +416,15 @@ class DmLiveTypeRoundTripTest {
             byte[] decoded = Base64.getDecoder().decode(
                     dataUri.substring("data:application/octet-stream;base64,".length()));
             assertArrayEquals(content, decoded);
-            // but it is a display encoding: the current write path has no decoder,
-            // so BLOB is classified read-only (see M1-type-matrix.md).
+            SqlCommandResult write = rowWrite.insertRow(conn, null, SCHEMA, t, List.of(
+                    new TableRowValue("ID", 2), new TableRowValue("C_BLOB", dataUri)));
+            assertTrue(write.isSuccess(), "BLOB write-back failed: " + write.getErrorMessage());
+            try (PreparedStatement ps = conn.prepareStatement(
+                    "SELECT C_BLOB FROM " + SCHEMA + "." + t + " WHERE ID = 2");
+                 ResultSet rs = ps.executeQuery()) {
+                assertTrue(rs.next());
+                assertArrayEquals(content, rs.getBytes(1));
+            }
         }
     }
 

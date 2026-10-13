@@ -3,8 +3,6 @@ package edu.zsc.ai.plugin.dm.value;
 import edu.zsc.ai.plugin.dm.value.template.DmValueProcessorFactory;
 import edu.zsc.ai.plugin.value.DefaultValueProcessor;
 import edu.zsc.ai.plugin.value.JdbcValueContext;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.sql.ResultSet;
 import java.sql.SQLException;
@@ -31,8 +29,6 @@ public class DmValueProcessor extends DefaultValueProcessor {
     private DmValueProcessor() {
     }
 
-    private static final Logger log = LoggerFactory.getLogger(DmValueProcessor.class);
-
     @Override
     public Object getJdbcValue(JdbcValueContext context) throws SQLException {
         ResultSet resultSet = context.getResultSet();
@@ -52,19 +48,21 @@ public class DmValueProcessor extends DefaultValueProcessor {
         }
 
         // Delegate to type-specific processor via factory
-        return convertJdbcValueByType(context);
+        Object converted = convertJdbcValueByType(context);
+        if (converted == null) {
+            throw new SQLException("DM value conversion returned null for non-null column: "
+                    + context.getColumnName());
+        }
+        return converted;
     }
 
     @Override
     public Object convertJdbcValueByType(JdbcValueContext context) throws SQLException {
-        try {
-            // Try to get type-specific processor from factory
-            DefaultValueProcessor typeProcessor = DmValueProcessorFactory.getValueProcessor(context.getColumnTypeName());
-            if (Objects.nonNull(typeProcessor)) {
-                return typeProcessor.convertJdbcValueByType(context);
-            }
-        } catch (Exception e) {
-            log.warn("Error using type-specific processor for type: {}", context.getColumnTypeName(), e);
+        // A failed type-specific read must stay a failure. Falling back to getString()
+        // can make a damaged decimal, timestamp or LOB look like a valid value.
+        DefaultValueProcessor typeProcessor = DmValueProcessorFactory.getValueProcessor(context.getColumnTypeName());
+        if (Objects.nonNull(typeProcessor)) {
+            return typeProcessor.convertJdbcValueByType(context);
         }
 
         // Fallback to default conversion

@@ -15,4 +15,9 @@ describe('DM table input values', () => {
     expect(normalizeEditedCellInput('', 'old', false)).toBeNull();
     expect(normalizeInsertInput('', false)).toBeNull();
   });
+
+  it('keeps DM numeric edits as text until JDBC can bind them without JavaScript precision loss', () => {
+    expect(normalizeEditedCellInput('9007199254740993', 1, true)).toBe('9007199254740993');
+    expect(normalizeEditedCellInput('1234567890.123456789', 1, true)).toBe('1234567890.123456789');
+  });
 });

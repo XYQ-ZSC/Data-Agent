@@ -4,6 +4,7 @@ import edu.zsc.ai.domain.model.context.DbContext;
 import edu.zsc.ai.domain.model.dto.request.db.AgentExecuteSqlRequest;
 import edu.zsc.ai.domain.model.dto.response.db.ExecuteSqlResponse;
 import edu.zsc.ai.plugin.model.transaction.BatchMode;
+import edu.zsc.ai.plugin.execution.StatementCancellationRegistry.CancelOutcome;
 
 import java.util.List;
 
@@ -43,4 +44,11 @@ public interface SqlExecutionService {
      * @return one response per statement, in the same order as input
      */
     List<ExecuteSqlResponse> executeBatchSql(DbContext db, List<String> sqls, BatchMode mode);
+
+    /** Execute a script with bounded resources and a cancellable execution identity. */
+    List<ExecuteSqlResponse> executeBatchSql(DbContext db, List<String> sqls, BatchMode mode,
+                                             SqlExecutionOptions options);
+
+    /** Request cancellation only when the caller owns the in-flight execution. */
+    CancelOutcome cancelExecution(DbContext db, String executionId);
 }

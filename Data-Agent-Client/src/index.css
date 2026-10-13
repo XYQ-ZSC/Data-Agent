@@ -1006,3 +1006,17 @@
     display: none; /* Chrome/Safari */
   }
 }
+
+.er-diagram-flow .react-flow__node.draggable,
+.er-diagram-flow .react-flow__node.draggable.dragging {
+  cursor: default;
+}
+
+.er-diagram-flow .er-drag-handle {
+  cursor: grab;
+}
+
+.er-diagram-flow .react-flow__node.dragging .er-drag-handle,
+.er-diagram-flow .er-drag-handle:active {
+  cursor: grabbing;
+}

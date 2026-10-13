@@ -1,4 +1,4 @@
-import { Download, FileText, Pencil, Plus, Table, Table2, Trash2, Upload } from 'lucide-react';
+import { Download, FileText, Pencil, Plus, Table, Table2, Trash2, Upload, Waypoints } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import {
   ContextMenuContent,
@@ -17,6 +17,7 @@ interface NodeContextMenuContentProps {
   isConnected: boolean;
   onOpenQueryConsole: (node: ExplorerNode) => void;
   onCreateTable: (node: ExplorerNode) => void;
+  onOpenErDiagram: (node: ExplorerNode) => void;
   onViewDdl: (node: ExplorerNode) => void;
   onViewData: (node: ExplorerNode, highlightColumn?: string) => void;
   onRename: (node: ExplorerNode) => void;
@@ -32,6 +33,7 @@ export function NodeContextMenuContent({
   isConnected,
   onOpenQueryConsole,
   onCreateTable,
+  onOpenErDiagram,
   onViewDdl,
   onViewData,
   onRename,
@@ -49,7 +51,9 @@ export function NodeContextMenuContent({
     node.type === ExplorerNodeType.VIEW ||
     node.type === ExplorerNodeType.FUNCTION ||
     node.type === ExplorerNodeType.PROCEDURE ||
-    node.type === ExplorerNodeType.TRIGGER;
+    node.type === ExplorerNodeType.TRIGGER ||
+    node.type === ExplorerNodeType.SEQUENCE ||
+    node.type === ExplorerNodeType.CONSTRAINT;
 
   const isTableOrView = node.type === ExplorerNodeType.TABLE || node.type === ExplorerNodeType.VIEW;
 
@@ -63,7 +67,7 @@ export function NodeContextMenuContent({
   const isDeletableFolder =
     node.type === ExplorerNodeType.FOLDER &&
     node.folderName &&
-    ['tables', 'views', 'routines', 'triggers'].includes(node.folderName);
+    ['tables', 'views', 'routines', 'triggers', 'sequences'].includes(node.folderName);
 
   const isTablesFolder =
     node.type === ExplorerNodeType.FOLDER && node.folderName === 'tables';
@@ -123,6 +127,12 @@ export function NodeContextMenuContent({
           </ContextMenuItem>
           <ContextMenuSeparator />
         </>
+      )}
+      {isTablesFolder && (
+        <ContextMenuItem onSelect={() => onOpenErDiagram(node)}>
+          <Waypoints className="w-3.5 h-3.5 mr-2" />
+          {t(I18N_KEYS.EXPLORER.ER_DIAGRAM)}
+        </ContextMenuItem>
       )}
 
       {/* 2. View DDL - for DDL objects */}
@@ -229,6 +239,26 @@ export function NodeContextMenuContent({
         >
           <Trash2 className="w-3.5 h-3.5 mr-2" />
           {t(I18N_KEYS.EXPLORER.DELETE_TRIGGER)}
+        </ContextMenuItem>
+      )}
+
+      {node.type === ExplorerNodeType.SEQUENCE && (
+        <ContextMenuItem
+          onSelect={() => onDelete(node, ExplorerNodeType.SEQUENCE)}
+          className="text-destructive focus:text-destructive"
+        >
+          <Trash2 className="w-3.5 h-3.5 mr-2" />
+          {t(I18N_KEYS.EXPLORER.DELETE_SEQUENCE)}
+        </ContextMenuItem>
+      )}
+
+      {node.type === ExplorerNodeType.CONSTRAINT && (
+        <ContextMenuItem
+          onSelect={() => onDelete(node, ExplorerNodeType.CONSTRAINT)}
+          className="text-destructive focus:text-destructive"
+        >
+          <Trash2 className="w-3.5 h-3.5 mr-2" />
+          {t(I18N_KEYS.EXPLORER.DELETE_CONSTRAINT)}
         </ContextMenuItem>
       )}
 

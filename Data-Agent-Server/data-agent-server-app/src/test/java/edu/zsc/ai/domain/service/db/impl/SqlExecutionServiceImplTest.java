@@ -5,6 +5,11 @@ import edu.zsc.ai.domain.model.dto.request.db.AgentExecuteSqlRequest;
 import edu.zsc.ai.domain.model.dto.response.db.ExecuteSqlResponse;
 import edu.zsc.ai.domain.service.db.ConnectionAccessService;
 import edu.zsc.ai.domain.service.db.ConnectionService;
+import edu.zsc.ai.domain.service.db.SqlExecutionOptions;
+import edu.zsc.ai.context.RequestContext;
+import edu.zsc.ai.context.RequestContextInfo;
+import edu.zsc.ai.common.enums.org.WorkspaceTypeEnum;
+import edu.zsc.ai.plugin.execution.StatementCancellationRegistry;
 import edu.zsc.ai.plugin.capability.CommandExecutor;
 import edu.zsc.ai.plugin.capability.SqlValidator;
 import edu.zsc.ai.plugin.manager.DefaultPluginManager;
@@ -21,7 +26,9 @@ import org.mockito.MockedStatic;
 
 import java.sql.Connection;
 import java.sql.SQLException;
+import java.sql.Statement;
 import java.util.List;
+import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -37,6 +44,50 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class SqlExecutionServiceImplTest {
+
+    @Test
+    void cancelOnlyReachesStatementForSameUserWorkspaceAndConnection() throws Exception {
+        TestContext context = context();
+        String executionId = UUID.randomUUID().toString();
+        Statement statement = mock(Statement.class);
+        when(context.validator.validate("SELECT 1"))
+                .thenReturn(SqlValidationResult.valid(SqlType.SELECT, List.of(), List.of()));
+        when(context.executor.executeCommand(any())).thenAnswer(ignored -> {
+            try (var registration = StatementCancellationRegistry.getInstance().register(executionId, statement)) {
+                RequestContext.set(RequestContextInfo.builder().userId(2L)
+                        .workspaceType(WorkspaceTypeEnum.PERSONAL).build());
+                assertEquals(StatementCancellationRegistry.CancelOutcome.NO_ACTIVE_STATEMENT,
+                        context.service.cancelExecution(context.db, executionId));
+                RequestContext.set(RequestContextInfo.builder().userId(1L)
+                        .workspaceType(WorkspaceTypeEnum.ORGANIZATION).orgId(7L).build());
+                assertEquals(StatementCancellationRegistry.CancelOutcome.NO_ACTIVE_STATEMENT,
+                        context.service.cancelExecution(context.db, executionId));
+                RequestContext.set(RequestContextInfo.builder().userId(1L)
+                        .workspaceType(WorkspaceTypeEnum.PERSONAL).build());
+                assertEquals(StatementCancellationRegistry.CancelOutcome.NO_ACTIVE_STATEMENT,
+                        context.service.cancelExecution(new DbContext(2L, "DB", "SCHEMA"), executionId));
+                assertEquals(StatementCancellationRegistry.CancelOutcome.CANCEL_REQUESTED,
+                        context.service.cancelExecution(context.db, executionId));
+            }
+            return result(true, null);
+        });
+
+        RequestContext.set(RequestContextInfo.builder().userId(1L)
+                .workspaceType(WorkspaceTypeEnum.PERSONAL).build());
+        try (MockedStatic<ActiveConnectionRegistry> registry = mockStatic(ActiveConnectionRegistry.class);
+             MockedStatic<DefaultPluginManager> plugins = mockStatic(DefaultPluginManager.class)) {
+            registry.when(() -> ActiveConnectionRegistry.getOwnedConnection(context.db)).thenReturn(context.active);
+            plugins.when(DefaultPluginManager::getInstance).thenReturn(context.pluginManager);
+            context.service.executeSql(AgentExecuteSqlRequest.builder()
+                    .connectionId(context.db.connectionId()).catalog(context.db.catalog())
+                    .schema(context.db.schema()).sql("SELECT 1").executionId(executionId).build());
+        } finally {
+            RequestContext.clear();
+        }
+        verify(statement).cancel();
+        assertEquals(StatementCancellationRegistry.CancelOutcome.NO_ACTIVE_STATEMENT,
+                context.service.cancelExecution(context.db, executionId));
+    }
 
     @Test
     void writeStatementKeepsExecutorTransaction() throws Exception {
@@ -174,14 +225,8 @@ class SqlExecutionServiceImplTest {
     }
 
     @Test
-    void atomicBatchWithExecutedDdlCannotClaimFullRollback() throws Exception {
+    void atomicBatchRejectsDdlBeforeAnyExecution() throws Exception {
         TestContext context = context();
-        when(context.connection.getAutoCommit()).thenReturn(true);
-        when(context.validator.classifySql("CREATE TABLE X (ID INT)")).thenReturn(SqlType.CREATE);
-        when(context.validator.classifySql("INSERT INTO X VALUES (1)")).thenReturn(SqlType.INSERT);
-        AtomicInteger invocation = new AtomicInteger();
-        when(context.executor.executeCommand(any())).thenAnswer(ignored ->
-                invocation.getAndIncrement() < 2 ? result(true, null) : failedResult("broken statement"));
 
         List<ExecuteSqlResponse> responses;
         try (MockedStatic<ActiveConnectionRegistry> registry = mockStatic(ActiveConnectionRegistry.class);
@@ -193,12 +238,35 @@ class SqlExecutionServiceImplTest {
                     List.of("CREATE TABLE X (ID INT)", "INSERT INTO X VALUES (1)", "INSERT INTO NOPE VALUES (1)"));
         }
 
-        verify(context.connection).rollback();
-        // DDL implicitly commits on DM/Oracle/MySQL: up to the DDL the outcome is undecidable
-        assertEquals(StatementExecutionState.UNKNOWN, responses.get(0).getStatementState());
-        assertEquals(StatementExecutionState.ROLLED_BACK, responses.get(1).getStatementState());
-        assertEquals(StatementExecutionState.FAILED, responses.get(2).getStatementState());
-        responses.forEach(r -> assertEquals(BatchExecutionState.UNKNOWN, r.getBatchState()));
+        verify(context.executor, never()).executeCommand(any());
+        verify(context.connection, never()).setAutoCommit(false);
+        responses.forEach(r -> {
+            assertEquals(StatementExecutionState.NOT_EXECUTED, r.getStatementState());
+            assertEquals(BatchExecutionState.FAILED, r.getBatchState());
+            assertTrue(r.getErrorMessage().contains("STEPWISE"));
+        });
+    }
+
+    @Test
+    void stepwiseModeAllowsExplicitDdlAndReportsIndependentCommit() throws Exception {
+        TestContext context = context();
+        SqlCommandResult committed = result(true, null);
+        committed.setStatementState(StatementExecutionState.COMMITTED);
+        committed.setTransactionOutcome(edu.zsc.ai.plugin.model.transaction.TransactionOutcome.COMMITTED);
+        when(context.executor.executeCommand(any())).thenReturn(committed);
+
+        List<ExecuteSqlResponse> responses;
+        try (MockedStatic<ActiveConnectionRegistry> registry = mockStatic(ActiveConnectionRegistry.class);
+             MockedStatic<DefaultPluginManager> plugins = mockStatic(DefaultPluginManager.class)) {
+            registry.when(() -> ActiveConnectionRegistry.getOwnedConnection(context.db)).thenReturn(context.active);
+            plugins.when(DefaultPluginManager::getInstance).thenReturn(context.pluginManager);
+            responses = context.service.executeBatchSql(context.db,
+                    List.of("CREATE TABLE X (ID INT)"), BatchMode.STEPWISE);
+        }
+
+        assertEquals(StatementExecutionState.COMMITTED, responses.get(0).getStatementState());
+        assertEquals(BatchExecutionState.SUCCESS, responses.get(0).getBatchState());
+        verify(context.executor).executeCommand(any());
     }
 
     @Test
@@ -285,6 +353,60 @@ class SqlExecutionServiceImplTest {
     }
 
     @Test
+    void stepwiseCancellationStopsRemainingStatementsAndForwardsLimits() throws Exception {
+        TestContext context = context();
+        SqlCommandResult cancelled = failedResult("cancelled by database");
+        cancelled.setStatementState(StatementExecutionState.CANCELLED);
+        when(context.executor.executeCommand(any())).thenReturn(cancelled);
+
+        List<ExecuteSqlResponse> responses;
+        try (MockedStatic<ActiveConnectionRegistry> registry = mockStatic(ActiveConnectionRegistry.class);
+             MockedStatic<DefaultPluginManager> plugins = mockStatic(DefaultPluginManager.class)) {
+            registry.when(() -> ActiveConnectionRegistry.getOwnedConnection(context.db)).thenReturn(context.active);
+            plugins.when(DefaultPluginManager::getInstance).thenReturn(context.pluginManager);
+
+            responses = context.service.executeBatchSql(context.db, List.of("SELECT 1", "UPDATE T SET C=1"),
+                    BatchMode.STEPWISE, new SqlExecutionOptions(5000, 50, null));
+        }
+
+        ArgumentCaptor<SqlCommandRequest> requests = ArgumentCaptor.forClass(SqlCommandRequest.class);
+        verify(context.executor).executeCommand(requests.capture());
+        assertEquals(5000, requests.getValue().getTimeoutMs());
+        assertEquals(50, requests.getValue().getMaxRows());
+        assertEquals(StatementExecutionState.CANCELLED, responses.get(0).getStatementState());
+        assertEquals(StatementExecutionState.NOT_EXECUTED, responses.get(1).getStatementState());
+    }
+
+    @Test
+    void cancelBetweenStatementsPreventsNextStepFromStarting() throws Exception {
+        TestContext context = context();
+        String executionId = UUID.randomUUID().toString();
+        when(context.executor.executeCommand(any())).thenAnswer(ignored -> {
+            assertEquals(StatementCancellationRegistry.CancelOutcome.CANCEL_REQUESTED,
+                    context.service.cancelExecution(context.db, executionId));
+            SqlCommandResult committed = result(true, null);
+            committed.setStatementState(StatementExecutionState.COMMITTED);
+            committed.setTransactionOutcome(edu.zsc.ai.plugin.model.transaction.TransactionOutcome.COMMITTED);
+            return committed;
+        });
+        RequestContext.set(RequestContextInfo.builder().userId(1L)
+                .workspaceType(WorkspaceTypeEnum.PERSONAL).build());
+        List<ExecuteSqlResponse> responses;
+        try (MockedStatic<ActiveConnectionRegistry> registry = mockStatic(ActiveConnectionRegistry.class);
+             MockedStatic<DefaultPluginManager> plugins = mockStatic(DefaultPluginManager.class)) {
+            registry.when(() -> ActiveConnectionRegistry.getOwnedConnection(context.db)).thenReturn(context.active);
+            plugins.when(DefaultPluginManager::getInstance).thenReturn(context.pluginManager);
+            responses = context.service.executeBatchSql(context.db, List.of("SELECT 1", "UPDATE T SET C=1"),
+                    BatchMode.STEPWISE, new SqlExecutionOptions(5000, 50, executionId));
+        } finally {
+            RequestContext.clear();
+        }
+        verify(context.executor).executeCommand(any());
+        assertEquals(StatementExecutionState.COMMITTED, responses.get(0).getStatementState());
+        assertEquals(StatementExecutionState.NOT_EXECUTED, responses.get(1).getStatementState());
+    }
+
+    @Test
     void batchWithTransactionControlIsRejectedBeforeExecution() throws Exception {
         TestContext context = context();
         when(context.validator.isTransactionControl("COMMIT")).thenReturn(true);
@@ -308,11 +430,59 @@ class SqlExecutionServiceImplTest {
         verify(context.executor, never()).executeCommand(any());
     }
 
+    @Test
+    void successfulDdlInvalidatesCompletionMetadata() throws Exception {
+        TestContext context = context();
+        when(context.validator.classifySql("ALTER TABLE T ADD C INT")).thenReturn(SqlType.ALTER);
+        when(context.executor.executeCommand(any())).thenReturn(result(true, null));
+        try (MockedStatic<ActiveConnectionRegistry> registry = mockStatic(ActiveConnectionRegistry.class);
+             MockedStatic<DefaultPluginManager> plugins = mockStatic(DefaultPluginManager.class)) {
+            registry.when(() -> ActiveConnectionRegistry.getOwnedConnection(context.db)).thenReturn(context.active);
+            plugins.when(DefaultPluginManager::getInstance).thenReturn(context.pluginManager);
+            context.service.executeSql(AgentExecuteSqlRequest.builder().connectionId(context.db.connectionId())
+                    .catalog(context.db.catalog()).schema(context.db.schema()).sql("ALTER TABLE T ADD C INT").build());
+        }
+        verify(context.completionCache).invalidate(1L);
+    }
+
+    @Test
+    void failedDdlDoesNotInvalidateCompletionMetadata() throws Exception {
+        TestContext context = context();
+        when(context.validator.classifySql("CREATE TABLE T(ID INT)")).thenReturn(SqlType.CREATE);
+        when(context.executor.executeCommand(any())).thenReturn(failedResult("denied"));
+        try (MockedStatic<ActiveConnectionRegistry> registry = mockStatic(ActiveConnectionRegistry.class);
+             MockedStatic<DefaultPluginManager> plugins = mockStatic(DefaultPluginManager.class)) {
+            registry.when(() -> ActiveConnectionRegistry.getOwnedConnection(context.db)).thenReturn(context.active);
+            plugins.when(DefaultPluginManager::getInstance).thenReturn(context.pluginManager);
+            context.service.executeSql(AgentExecuteSqlRequest.builder().connectionId(context.db.connectionId())
+                    .catalog(context.db.catalog()).schema(context.db.schema()).sql("CREATE TABLE T(ID INT)").build());
+        }
+        verify(context.completionCache, never()).invalidate(any());
+    }
+
+    @Test
+    void partialStepwiseBatchInvalidatesWhenLaterDdlSucceeded() throws Exception {
+        TestContext context = context();
+        when(context.validator.classifySql("BAD SQL")).thenReturn(SqlType.UNKNOWN);
+        when(context.validator.classifySql("CREATE TABLE T(ID INT)")).thenReturn(SqlType.CREATE);
+        SqlCommandResult ddl = result(true, null);
+        ddl.setStatementState(StatementExecutionState.COMMITTED);
+        when(context.executor.executeCommand(any())).thenReturn(failedResult("bad SQL"), ddl);
+        try (MockedStatic<ActiveConnectionRegistry> registry = mockStatic(ActiveConnectionRegistry.class);
+             MockedStatic<DefaultPluginManager> plugins = mockStatic(DefaultPluginManager.class)) {
+            registry.when(() -> ActiveConnectionRegistry.getOwnedConnection(context.db)).thenReturn(context.active);
+            plugins.when(DefaultPluginManager::getInstance).thenReturn(context.pluginManager);
+            context.service.executeBatchSql(context.db, List.of("BAD SQL", "CREATE TABLE T(ID INT)"), BatchMode.STEPWISE);
+        }
+        verify(context.completionCache).invalidate(1L);
+    }
+
     @SuppressWarnings("unchecked")
     private TestContext context() throws Exception {
         ConnectionService connectionService = mock(ConnectionService.class);
         ConnectionAccessService accessService = mock(ConnectionAccessService.class);
-        SqlExecutionServiceImpl service = new SqlExecutionServiceImpl(connectionService, accessService);
+        SqlCompletionMetadataCache completionCache = mock(SqlCompletionMetadataCache.class);
+        SqlExecutionServiceImpl service = new SqlExecutionServiceImpl(connectionService, accessService, completionCache);
         DbContext db = new DbContext(1L, "DB", "SCHEMA");
         Connection connection = mock(Connection.class);
         ActiveConnectionRegistry.ActiveConnection active = mock(ActiveConnectionRegistry.ActiveConnection.class);
@@ -320,10 +490,18 @@ class SqlExecutionServiceImplTest {
         when(active.borrowConnection()).thenReturn(new ActiveConnectionRegistry.BorrowedConnection(connection, active));
         CommandExecutor<SqlCommandRequest, SqlCommandResult> executor = mock(CommandExecutor.class);
         SqlValidator validator = mock(SqlValidator.class);
+        when(validator.validate(any())).thenAnswer(invocation -> {
+            String sql = invocation.getArgument(0);
+            SqlType type = sql.startsWith("SELECT") ? SqlType.SELECT
+                    : sql.startsWith("INSERT") ? SqlType.INSERT
+                    : sql.startsWith("UPDATE") ? SqlType.UPDATE
+                    : SqlType.UNKNOWN;
+            return SqlValidationResult.valid(type, List.of(), List.of());
+        });
         DefaultPluginManager pluginManager = mock(DefaultPluginManager.class);
         when(pluginManager.getSqlCommandExecutorByPluginId("test-plugin")).thenReturn(executor);
         when(pluginManager.getSqlValidatorByPluginId("test-plugin")).thenReturn(validator);
-        return new TestContext(service, db, connection, active, executor, validator, pluginManager);
+        return new TestContext(service, db, connection, active, executor, validator, pluginManager, completionCache);
     }
 
     private SqlCommandResult result(boolean success, String error) {
@@ -347,6 +525,7 @@ class SqlExecutionServiceImplTest {
             ActiveConnectionRegistry.ActiveConnection active,
             CommandExecutor<SqlCommandRequest, SqlCommandResult> executor,
             SqlValidator validator,
-            DefaultPluginManager pluginManager) {
+            DefaultPluginManager pluginManager,
+            SqlCompletionMetadataCache completionCache) {
     }
 }

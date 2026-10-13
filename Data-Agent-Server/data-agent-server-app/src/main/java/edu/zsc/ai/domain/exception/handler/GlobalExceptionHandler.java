@@ -18,6 +18,7 @@ import jakarta.validation.ConstraintViolationException;
 import edu.zsc.ai.common.enums.error.ErrorCodeEnum;
 import edu.zsc.ai.domain.exception.BusinessException;
 import edu.zsc.ai.domain.model.dto.response.base.ApiResponse;
+import edu.zsc.ai.plugin.connection.ConnectionFailureException;
 import edu.zsc.ai.util.I18nUtils;
 import lombok.extern.slf4j.Slf4j;
 
@@ -28,6 +29,15 @@ public class GlobalExceptionHandler {
 
     @Autowired
     private I18nUtils i18nUtils;
+
+    @ExceptionHandler(ConnectionFailureException.class)
+    public ResponseEntity<ApiResponse<Void>> handleConnectionFailure(ConnectionFailureException e) {
+        log.warn("Connection failed: category={}, sqlState={}, errorCode={}",
+                e.getCategory(), e.getSqlState(), e.getErrorCode());
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                .body(ApiResponse.error(ErrorCodeEnum.PARAMS_ERROR,
+                        e.getCategory() + ": " + e.getMessage()));
+    }
 
 
     @ExceptionHandler(BusinessException.class)
@@ -113,4 +123,3 @@ public class GlobalExceptionHandler {
                 .body(ApiResponse.error(ErrorCodeEnum.NO_AUTH_ERROR, message));
     }
 }
-
