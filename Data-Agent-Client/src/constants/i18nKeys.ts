@@ -274,6 +274,8 @@ export const I18N_KEYS = {
     ER_DIAGRAM_FILTER_EXACT: 'explorer.er_diagram_filter_exact',
     ER_DIAGRAM_FILTER_EMPTY: 'explorer.er_diagram_filter_empty',
     ER_DIAGRAM_DRAG_TABLE: 'explorer.er_diagram_drag_table',
+    ER_DIAGRAM_EXPAND_COLUMNS: 'explorer.er_diagram_expand_columns',
+    ER_DIAGRAM_COLLAPSE_COLUMNS: 'explorer.er_diagram_collapse_columns',
     ER_DIAGRAM_VIA: 'explorer.er_diagram_via',
     VIEW_DATA: 'explorer.view_data',
     TABLE_DATA: 'explorer.table_data',

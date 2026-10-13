@@ -485,6 +485,8 @@
     "er_diagram_filter_exact": "Exact names",
     "er_diagram_filter_empty": "No matching tables",
     "er_diagram_drag_table": "Drag the header to move this table",
+    "er_diagram_expand_columns": "Show {{count}} more columns",
+    "er_diagram_collapse_columns": "Collapse columns",
     "er_diagram_legend_one": "1",
     "er_diagram_legend_many": "N",
     "er_diagram_legend_many_to_many": "N:M",

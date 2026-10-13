@@ -485,6 +485,8 @@
     "er_diagram_filter_exact": "启用精准过滤",
     "er_diagram_filter_empty": "没有匹配的表",
     "er_diagram_drag_table": "拖动表头可移动此表",
+    "er_diagram_expand_columns": "展开其余 {{count}} 个字段",
+    "er_diagram_collapse_columns": "收起字段",
     "er_diagram_legend_one": "1",
     "er_diagram_legend_many": "N",
     "er_diagram_legend_many_to_many": "N:M",

@@ -108,65 +108,6 @@ export function junctionTableId(relation: ErRelation) {
   return tableId({ catalog: relation.viaCatalog, schema: relation.viaSchema, name: relation.viaTable });
 }
 
-export const MIN_DIAGRAM_SCALE = 0.08;
-export const MAX_DIAGRAM_SCALE = 1.8;
-const FIT_MAX_SCALE = 1;
-const FIT_PADDING = 32;
-
-export interface DiagramView {
-  x: number;
-  y: number;
-  scale: number;
-}
-
-/** Scales and centers every card inside the viewport. Does not enlarge past 100%. */
-export function fitDiagramView(
-  boxes: Array<{ x: number; y: number; width: number; height: number }>,
-  viewportWidth: number,
-  viewportHeight: number,
-): DiagramView | null {
-  if (boxes.length === 0 || viewportWidth <= 0 || viewportHeight <= 0) return null;
-  let minX = Infinity;
-  let minY = Infinity;
-  let maxX = -Infinity;
-  let maxY = -Infinity;
-  boxes.forEach((box) => {
-    minX = Math.min(minX, box.x);
-    minY = Math.min(minY, box.y);
-    maxX = Math.max(maxX, box.x + box.width);
-    maxY = Math.max(maxY, box.y + box.height);
-  });
-  const contentWidth = Math.max(maxX - minX, 1);
-  const contentHeight = Math.max(maxY - minY, 1);
-  const availableWidth = Math.max(viewportWidth - FIT_PADDING * 2, 1);
-  const availableHeight = Math.max(viewportHeight - FIT_PADDING * 2, 1);
-  const scale = Math.min(
-    FIT_MAX_SCALE,
-    Math.max(MIN_DIAGRAM_SCALE, Math.min(availableWidth / contentWidth, availableHeight / contentHeight)),
-  );
-  return {
-    x: viewportWidth / 2 - ((minX + maxX) / 2) * scale,
-    y: viewportHeight / 2 - ((minY + maxY) / 2) * scale,
-    scale,
-  };
-}
-
-const ZOOM_STEP = 0.08;
-
-/** Zooms around the pointer so the diagram point under the cursor stays there. */
-export function zoomDiagramView(view: DiagramView, pointerX: number, pointerY: number, deltaY: number): DiagramView {
-  if (!deltaY || view.scale <= 0) return view;
-  const scale = Math.min(MAX_DIAGRAM_SCALE, Math.max(MIN_DIAGRAM_SCALE, view.scale + (deltaY < 0 ? ZOOM_STEP : -ZOOM_STEP)));
-  if (scale === view.scale) return view;
-  const canvasX = (pointerX - view.x) / view.scale;
-  const canvasY = (pointerY - view.y) / view.scale;
-  return {
-    x: pointerX - canvasX * scale,
-    y: pointerY - canvasY * scale,
-    scale,
-  };
-}
-
 /** Keeps tables whose name matches, and lines whose two ends are both still shown. */
 export function filterTablesByName(diagram: ErDiagram, query: string, exact = false): ErDiagram {
   const needles = query.split(',').map((part) => part.trim().toLowerCase()).filter(Boolean);

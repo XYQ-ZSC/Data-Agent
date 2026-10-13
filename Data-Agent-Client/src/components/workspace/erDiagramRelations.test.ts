@@ -5,10 +5,8 @@ import {
   cardinalityLabel,
   collapseJunctions,
   endMarks,
-  fitDiagramView,
   filterTablesByName,
   junctionTableId,
-  zoomDiagramView,
   relationMapping,
   relationTouches,
   sideColumns,
@@ -187,61 +185,5 @@ describe('filter tables by name', () => {
     expect(filterTablesByName(sakila, 'a').tables.map((table) => table.name).sort()).toEqual(['actor', 'address']);
     expect(filterTablesByName(sakila, 'c').tables.map((table) => table.name).sort()).toEqual(['actor', 'city']);
     expect(filterTablesByName(sakila, 'sakila').tables).toHaveLength(4);
-  });
-});
-
-describe('fit diagram view', () => {
-  const card = (x: number, y: number) => ({ x, y, width: 260, height: 200 });
-
-  it('shrinks a diagram that is larger than the viewport and keeps a margin', () => {
-    const fitted = fitDiagramView([card(24, 24), card(400, 400)], 500, 400);
-    expect(fitted).not.toBeNull();
-    expect(fitted!.scale).toBeLessThan(1);
-    const minX = 24;
-    const minY = 24;
-    const maxX = 660;
-    const maxY = 600;
-    expect(fitted!.x + minX * fitted!.scale).toBeGreaterThanOrEqual(32 - 0.01);
-    expect(fitted!.y + minY * fitted!.scale).toBeGreaterThanOrEqual(32 - 0.01);
-    expect(fitted!.x + maxX * fitted!.scale).toBeLessThanOrEqual(500 - 32 + 0.01);
-    expect(fitted!.y + maxY * fitted!.scale).toBeLessThanOrEqual(400 - 32 + 0.01);
-  });
-
-  it('centers a diagram that already fits without enlarging it', () => {
-    const fitted = fitDiagramView([card(24, 24)], 1200, 800);
-    expect(fitted!.scale).toBe(1);
-    expect(fitted!.x + 24 + 130).toBeCloseTo(600);
-    expect(fitted!.y + 24 + 100).toBeCloseTo(400);
-  });
-
-  it('returns null when there is nothing to fit', () => {
-    expect(fitDiagramView([], 800, 600)).toBeNull();
-    expect(fitDiagramView([card(0, 0)], 0, 600)).toBeNull();
-  });
-});
-
-describe('zoom diagram view', () => {
-  it('keeps the diagram point under the pointer when zooming in at the bottom right', () => {
-    const view = { x: 40, y: 30, scale: 0.5 };
-    const pointerX = 720;
-    const pointerY = 480;
-    const canvasX = (pointerX - view.x) / view.scale;
-    const canvasY = (pointerY - view.y) / view.scale;
-    const zoomed = zoomDiagramView(view, pointerX, pointerY, -100);
-    expect(zoomed.scale).toBeGreaterThan(view.scale);
-    expect(zoomed.x + canvasX * zoomed.scale).toBeCloseTo(pointerX);
-    expect(zoomed.y + canvasY * zoomed.scale).toBeCloseTo(pointerY);
-  });
-
-  it('keeps the same point under the pointer when zooming out', () => {
-    const view = { x: -80, y: -40, scale: 1.2 };
-    const pointerX = 500;
-    const pointerY = 360;
-    const canvasX = (pointerX - view.x) / view.scale;
-    const canvasY = (pointerY - view.y) / view.scale;
-    const zoomed = zoomDiagramView(view, pointerX, pointerY, 100);
-    expect(zoomed.scale).toBeLessThan(view.scale);
-    expect(zoomed.x + canvasX * zoomed.scale).toBeCloseTo(pointerX);
-    expect(zoomed.y + canvasY * zoomed.scale).toBeCloseTo(pointerY);
   });
 });
