@@ -36,8 +36,8 @@ public class SqlTableDataExporter {
 
     private final ConnectionService connectionService;
 
-    public void export(DbContext db, String tableName, OutputStream outputStream,
-                       Runnable onBeforeFirstWrite) {
+    public void export(DbContext db, String tableName, List<String> columns,
+                       OutputStream outputStream, Runnable onBeforeFirstWrite) {
         connectionService.openConnection(db);
 
         ActiveConnectionRegistry.ActiveConnection active = ActiveConnectionRegistry.getOwnedConnection(db);
@@ -54,11 +54,14 @@ public class SqlTableDataExporter {
             SqlCommandResult first = provider.getTableData(connection, db.catalog(), db.schema(),
                     tableName, offset, TransferConstants.EXPORT_PAGE_SIZE);
 
+            List<String> headers = first.getHeaders() == null ? List.of() : first.getHeaders();
+            List<Integer> columnIndexes = ExportColumnSelector.resolve(headers, columns);
+            List<String> selectedHeaders = columnIndexes.stream().map(headers::get).toList();
+
             // First page query succeeded: it is now safe to commit file-download headers.
             onBeforeFirstWrite.run();
 
-            List<String> headers = first.getHeaders();
-            Map<String, Integer> jdbcTypeByName = resolveJdbcTypes(first, headers);
+            Map<String, Integer> jdbcTypeByName = resolveJdbcTypes(first);
 
             writer.write("-- DataAgent data export");
             writer.write("\r\n");
@@ -69,10 +72,11 @@ public class SqlTableDataExporter {
             writer.write("SET NAMES utf8mb4;");
             writer.write("\r\n\r\n");
 
-            String columnList = String.join(", ", headers);
+            String columnList = String.join(", ", selectedHeaders);
             List<List<Object>> firstRows = first.getRows();
             if (firstRows != null && !firstRows.isEmpty()) {
-                writeInsertStatements(writer, tableName, columnList, headers, jdbcTypeByName, firstRows);
+                writeInsertStatements(writer, tableName, columnList, selectedHeaders, columnIndexes,
+                        jdbcTypeByName, firstRows);
                 log.info("SQL export started: connectionId={}, tableName={}, firstPageRows={}",
                         db.connectionId(), tableName, firstRows.size());
 
@@ -84,7 +88,8 @@ public class SqlTableDataExporter {
                     if (rows == null || rows.isEmpty()) {
                         break;
                     }
-                    writeInsertStatements(writer, tableName, columnList, headers, jdbcTypeByName, rows);
+                    writeInsertStatements(writer, tableName, columnList, selectedHeaders, columnIndexes,
+                            jdbcTypeByName, rows);
                     writer.flush();
                     if (rows.size() < TransferConstants.EXPORT_PAGE_SIZE) {
                         break;
@@ -101,7 +106,7 @@ public class SqlTableDataExporter {
         }
     }
 
-    private Map<String, Integer> resolveJdbcTypes(SqlCommandResult result, List<String> headers) {
+    private Map<String, Integer> resolveJdbcTypes(SqlCommandResult result) {
         Map<String, Integer> map = new HashMap<>();
         if (result.getColumns() != null) {
             for (SqlColumnInfo column : result.getColumns()) {
@@ -114,15 +119,17 @@ public class SqlTableDataExporter {
     }
 
     private void writeInsertStatements(BufferedWriter writer, String tableName, String columnList,
-                                       List<String> headers, Map<String, Integer> jdbcTypeByName,
+                                       List<String> headers, List<Integer> columnIndexes,
+                                       Map<String, Integer> jdbcTypeByName,
                                        List<List<Object>> rows) throws IOException {
         for (List<Object> row : rows) {
             writer.write("INSERT INTO " + tableName + " (" + columnList + ") VALUES (");
-            for (int i = 0; i < headers.size(); i++) {
+            for (int i = 0; i < columnIndexes.size(); i++) {
                 if (i > 0) {
                     writer.write(", ");
                 }
-                Object value = i < row.size() ? row.get(i) : null;
+                int index = columnIndexes.get(i);
+                Object value = index < row.size() ? row.get(index) : null;
                 Integer jdbcType = jdbcTypeByName.get(headers.get(i));
                 writer.write(toSqlLiteral(value, jdbcType));
             }

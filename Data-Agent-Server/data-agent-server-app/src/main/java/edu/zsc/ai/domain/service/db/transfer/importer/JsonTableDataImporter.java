@@ -68,29 +68,43 @@ public class JsonTableDataImporter {
             ImportPrepareSupport.ResolvedTableColumns resolved =
                     prepareSupport.resolveTableColumns(columnManager, connection, db, tableName);
 
-            if (parser.nextToken() != JsonToken.START_ARRAY) {
-                throw new BusinessException("JSON file must contain a top-level array of row objects");
-            }
-
             // The first row object fixes the column list, mirroring the CSV header row.
-            if (parser.nextToken() != JsonToken.START_OBJECT) {
-                throw new BusinessException("JSON file contains no row objects");
-            }
-            JsonRow firstRow = readJsonRow(parser, 1);
-            List<ColumnMetadata> targetColumns = new ArrayList<>();
-            java.util.HashMap<String, Integer> fieldIndexByName = new java.util.HashMap<>();
-            for (int i = 0; i < firstRow.names().size(); i++) {
-                String fieldName = firstRow.names().get(i);
-                ColumnMetadata column = resolved.byName().get(fieldName.toLowerCase());
-                if (column == null) {
-                    throw new ImportFailureException(1, "JSON field '" + fieldName
-                            + "' does not match any column of table " + tableName);
+            // Header-phase validation failures return the same structured response as
+            // row-phase failures; otherwise they would surface as generic 500 errors.
+            JsonRow firstRow;
+            List<ColumnMetadata> targetColumns;
+            java.util.HashMap<String, Integer> fieldIndexByName;
+            try {
+                if (parser.nextToken() != JsonToken.START_ARRAY) {
+                    throw new BusinessException("JSON file must contain a top-level array of row objects");
                 }
-                targetColumns.add(column);
-                fieldIndexByName.put(fieldName.toLowerCase(), i);
-            }
-            if (targetColumns.isEmpty()) {
-                throw new ImportFailureException(1, "JSON file's first row object contains no fields");
+                if (parser.nextToken() != JsonToken.START_OBJECT) {
+                    throw new BusinessException("JSON file contains no row objects");
+                }
+                firstRow = readJsonRow(parser, 1);
+                targetColumns = new ArrayList<>();
+                fieldIndexByName = new java.util.HashMap<>();
+                for (int i = 0; i < firstRow.names().size(); i++) {
+                    String fieldName = firstRow.names().get(i);
+                    ColumnMetadata column = resolved.byName().get(fieldName.toLowerCase());
+                    if (column == null) {
+                        throw new ImportFailureException(1, "JSON field '" + fieldName
+                                + "' does not match any column of table " + tableName);
+                    }
+                    targetColumns.add(column);
+                    fieldIndexByName.put(fieldName.toLowerCase(), i);
+                }
+                if (targetColumns.isEmpty()) {
+                    throw new ImportFailureException(1, "JSON file's first row object contains no fields");
+                }
+            } catch (ImportFailureException failure) {
+                return ImportTableDataResponse.builder()
+                        .success(false)
+                        .totalRows(0)
+                        .insertedRows(0)
+                        .failedAtRow(failure.fileRow())
+                        .errorMessage(failure.getMessage())
+                        .build();
             }
 
             String identifierQuote = prepareSupport.resolveIdentifierQuote(connection);

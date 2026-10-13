@@ -166,9 +166,10 @@ public class TableController {
             @RequestParam(required = false) String catalog,
             @RequestParam(required = false) String schema,
             @RequestParam(defaultValue = "CSV") String fileType,
+            @RequestParam(defaultValue = "AUTO") String encoding,
             @RequestParam("file") MultipartFile file) {
-        log.info("Importing table data: connectionId={}, tableName={}, catalog={}, schema={}, fileType={}, size={}",
-                connectionId, tableName, catalog, schema, fileType, file.getSize());
+        log.info("Importing table data: connectionId={}, tableName={}, catalog={}, schema={}, fileType={}, encoding={}, size={}",
+                connectionId, tableName, catalog, schema, fileType, encoding, file.getSize());
 
         if (file.isEmpty()) {
             throw new edu.zsc.ai.domain.exception.BusinessException("Uploaded file is empty");
@@ -178,7 +179,7 @@ public class TableController {
         String type = fileType == null ? "" : fileType.trim().toUpperCase();
         try {
             ImportTableDataResponse result = switch (type) {
-                case "CSV" -> tableService.importTableDataCsv(db, tableName, file.getInputStream());
+                case "CSV" -> tableService.importTableDataCsv(db, tableName, file.getInputStream(), encoding);
                 case "JSON" -> tableService.importTableDataJson(db, tableName, file.getInputStream());
                 case "SQL" -> tableService.importTableDataSql(db, tableName, file.getInputStream());
                 case "XLSX", "XLS" -> tableService.importTableDataExcel(db, tableName, file.getInputStream());
@@ -198,9 +199,10 @@ public class TableController {
             @RequestParam(required = false) String catalog,
             @RequestParam(required = false) String schema,
             @RequestParam(defaultValue = "CSV") String fileType,
+            @RequestParam(required = false) String columns,
             HttpServletResponse response) throws java.io.IOException {
-        log.info("Exporting table data: connectionId={}, tableName={}, catalog={}, schema={}, fileType={}",
-                connectionId, tableName, catalog, schema, fileType);
+        log.info("Exporting table data: connectionId={}, tableName={}, catalog={}, schema={}, fileType={}, columns={}",
+                connectionId, tableName, catalog, schema, fileType, columns);
 
         String type = fileType == null ? "" : fileType.trim().toUpperCase();
         if (!"CSV".equals(type) && !"JSON".equals(type) && !"SQL".equals(type)
@@ -208,6 +210,7 @@ public class TableController {
             response.setStatus(HttpServletResponse.SC_BAD_REQUEST);
             return;
         }
+        List<String> selectedColumns = parseExportColumns(columns);
 
         String extension = switch (type) {
             case "JSON" -> ".json";
@@ -234,15 +237,29 @@ public class TableController {
         };
 
         switch (type) {
-            case "JSON" -> tableService.exportTableDataJson(db, tableName,
+            case "JSON" -> tableService.exportTableDataJson(db, tableName, selectedColumns,
                     response.getOutputStream(), prepareHeaders);
-            case "SQL" -> tableService.exportTableDataSql(db, tableName,
+            case "SQL" -> tableService.exportTableDataSql(db, tableName, selectedColumns,
                     response.getOutputStream(), prepareHeaders);
-            case "XLSX", "XLS" -> tableService.exportTableDataExcel(db, tableName, type,
+            case "XLSX", "XLS" -> tableService.exportTableDataExcel(db, tableName, type, selectedColumns,
                     response.getOutputStream(), prepareHeaders);
-            default -> tableService.exportTableDataCsv(db, tableName,
+            default -> tableService.exportTableDataCsv(db, tableName, selectedColumns,
                     response.getOutputStream(), prepareHeaders);
         }
+    }
+
+    /**
+     * Parses the comma-separated column list of the export request.
+     * Returns null (export all columns) when the parameter is blank.
+     */
+    private List<String> parseExportColumns(String columns) {
+        if (columns == null || columns.isBlank()) {
+            return null;
+        }
+        return java.util.Arrays.stream(columns.split(","))
+                .map(String::trim)
+                .filter(item -> !item.isEmpty())
+                .toList();
     }
 
     private List<TableRowValue> toRowValues(List<TableRowValueRequest> requests) {

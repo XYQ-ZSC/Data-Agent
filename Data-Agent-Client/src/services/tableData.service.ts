@@ -49,6 +49,8 @@ export interface ExportTableParams {
   catalog?: string;
   schema?: string;
   fileType: string;
+  /** Column names to export; omit for all columns. */
+  columns?: string[];
 }
 
 export interface ImportTableDataParams {
@@ -57,6 +59,7 @@ export interface ImportTableDataParams {
   catalog?: string;
   schema?: string;
   fileType: string;
+  encoding?: string;
   file: File;
 }
 
@@ -211,6 +214,9 @@ export const tableDataService = {
     };
     if (params.catalog != null && params.catalog !== '') query.catalog = params.catalog;
     if (params.schema != null && params.schema !== '') query.schema = params.schema;
+    if (params.columns != null && params.columns.length > 0) {
+      query.columns = params.columns.join(',');
+    }
 
     const response = await http.get<Blob>(ApiPaths.TABLE_EXPORT, {
       params: query,
@@ -231,6 +237,9 @@ export const tableDataService = {
     }
     if (params.schema != null && params.schema !== '') {
       formData.append('schema', params.schema);
+    }
+    if (params.encoding != null && params.encoding !== '') {
+      formData.append('encoding', params.encoding);
     }
 
     const response = await http.post<ImportTableDataResult>(ApiPaths.TABLE_IMPORT, formData, {

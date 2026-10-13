@@ -31,8 +31,8 @@ public class JsonTableDataExporter {
 
     private final ConnectionService connectionService;
 
-    public void export(DbContext db, String tableName, OutputStream outputStream,
-                       Runnable onBeforeFirstWrite) {
+    public void export(DbContext db, String tableName, List<String> columns,
+                       OutputStream outputStream, Runnable onBeforeFirstWrite) {
         connectionService.openConnection(db);
 
         ActiveConnectionRegistry.ActiveConnection active = ActiveConnectionRegistry.getOwnedConnection(db);
@@ -51,16 +51,18 @@ public class JsonTableDataExporter {
             SqlCommandResult first = provider.getTableData(connection, db.catalog(), db.schema(),
                     tableName, offset, TransferConstants.EXPORT_PAGE_SIZE);
 
+            List<String> headers = first.getHeaders() == null ? List.of() : first.getHeaders();
+            List<Integer> columnIndexes = ExportColumnSelector.resolve(headers, columns);
+
             // First page query succeeded: it is now safe to commit file-download headers.
             onBeforeFirstWrite.run();
 
-            List<String> headers = first.getHeaders();
             generator.writeStartArray();
 
             List<List<Object>> firstRows = first.getRows();
             if (firstRows != null && !firstRows.isEmpty()) {
                 for (List<Object> row : firstRows) {
-                    writeJsonObject(generator, headers, row);
+                    writeJsonObject(generator, headers, row, columnIndexes);
                 }
                 log.info("JSON export started: connectionId={}, tableName={}, firstPageRows={}",
                         db.connectionId(), tableName, firstRows.size());
@@ -74,7 +76,7 @@ public class JsonTableDataExporter {
                         break;
                     }
                     for (List<Object> row : rows) {
-                        writeJsonObject(generator, headers, row);
+                        writeJsonObject(generator, headers, row, columnIndexes);
                     }
                     generator.flush();
                     if (rows.size() < TransferConstants.EXPORT_PAGE_SIZE) {
@@ -93,12 +95,13 @@ public class JsonTableDataExporter {
         }
     }
 
-    private void writeJsonObject(JsonGenerator generator, List<String> headers, List<Object> row)
-            throws IOException {
+    private void writeJsonObject(JsonGenerator generator, List<String> headers, List<Object> row,
+                                 List<Integer> columnIndexes) throws IOException {
         generator.writeStartObject();
-        for (int i = 0; i < headers.size(); i++) {
-            generator.writeFieldName(headers.get(i));
-            Object value = i < row.size() ? row.get(i) : null;
+        for (int i = 0; i < columnIndexes.size(); i++) {
+            int index = columnIndexes.get(i);
+            generator.writeFieldName(headers.get(index));
+            Object value = index < row.size() ? row.get(index) : null;
             writeJsonValue(generator, value);
         }
         generator.writeEndObject();

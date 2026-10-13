@@ -23,6 +23,8 @@ interface NodeContextMenuContentProps {
   onDelete: (node: ExplorerNode, type: ExplorerNodeType) => void;
   onImportData: (node: ExplorerNode) => void;
   onExportData: (node: ExplorerNode) => void;
+  onExportTablesWizard: (node: ExplorerNode) => void;
+  onImportTablesWizard: (node: ExplorerNode) => void;
 }
 
 export function NodeContextMenuContent({
@@ -36,6 +38,8 @@ export function NodeContextMenuContent({
   onDelete,
   onImportData,
   onExportData,
+  onExportTablesWizard,
+  onImportTablesWizard,
 }: NodeContextMenuContentProps) {
   const { t } = useTranslation();
 
@@ -102,6 +106,21 @@ export function NodeContextMenuContent({
               )}
             </ContextMenuSubContent>
           </ContextMenuSub>
+          <ContextMenuSeparator />
+        </>
+      )}
+
+      {/* 1.5 Import/Export wizard - batch transfer tables from the tables folder */}
+      {isConnected && isTablesFolder && (
+        <>
+          <ContextMenuItem onSelect={() => onImportTablesWizard(node)}>
+            <Upload className="w-3.5 h-3.5 mr-2" />
+            {t(I18N_KEYS.EXPLORER.IMPORT_WIZARD)}
+          </ContextMenuItem>
+          <ContextMenuItem onSelect={() => onExportTablesWizard(node)}>
+            <Download className="w-3.5 h-3.5 mr-2" />
+            {t(I18N_KEYS.EXPLORER.EXPORT_WIZARD)}
+          </ContextMenuItem>
           <ContextMenuSeparator />
         </>
       )}

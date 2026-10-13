@@ -23,6 +23,8 @@ import org.springframework.stereotype.Component;
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.PushbackInputStream;
+import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
@@ -30,6 +32,7 @@ import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Set;
 
 /**
@@ -42,13 +45,78 @@ public class CsvTableDataImporter {
 
     private static final Logger log = LoggerFactory.getLogger(CsvTableDataImporter.class);
 
+    /** Leading bytes inspected when auto-detecting the CSV charset. */
+    private static final int ENCODE_DETECT_SAMPLE_SIZE = 8192;
+
     private final ConnectionService connectionService;
     private final ImportPrepareSupport prepareSupport;
     private final ColumnValueConverter valueConverter;
     private final ImportBatchSupport batchSupport;
 
+    /**
+     * Resolves the charset of the uploaded CSV. An explicit request encoding
+     * (UTF-8/GBK) wins; "AUTO" (default) sniffs the byte order mark first and
+     * falls back to strict UTF-8 validation on a leading sample: valid UTF-8
+     * keeps UTF-8, otherwise the file is decoded as GBK.
+     */
+    private Charset resolveCharset(PushbackInputStream inputStream, String requested) throws IOException {
+        if (requested != null && !requested.isBlank() && !"AUTO".equalsIgnoreCase(requested.trim())) {
+            return Charset.forName(requested.trim().toUpperCase(Locale.ROOT));
+        }
+        byte[] sample = new byte[ENCODE_DETECT_SAMPLE_SIZE];
+        int sampleLength = inputStream.readNBytes(sample, 0, sample.length);
+        if (sampleLength <= 0) {
+            return StandardCharsets.UTF_8;
+        }
+        inputStream.unread(sample, 0, sampleLength);
+        if (sampleLength >= 3 && (sample[0] & 0xFF) == 0xEF && (sample[1] & 0xFF) == 0xBB
+                && (sample[2] & 0xFF) == 0xBF) {
+            return StandardCharsets.UTF_8;
+        }
+        if (sampleLength >= 2 && (sample[0] & 0xFF) == 0xFF && (sample[1] & 0xFF) == 0xFE) {
+            return StandardCharsets.UTF_16LE;
+        }
+        if (sampleLength >= 2 && (sample[0] & 0xFF) == 0xFE && (sample[1] & 0xFF) == 0xFF) {
+            return StandardCharsets.UTF_16BE;
+        }
+        return looksLikeValidUtf8(sample, sampleLength) ? StandardCharsets.UTF_8 : Charset.forName("GBK");
+    }
+
+    /**
+     * Strict UTF-8 structure check on a leading sample; a multi-byte sequence
+     * cut off at the end of the sample is tolerated.
+     */
+    private boolean looksLikeValidUtf8(byte[] data, int length) {
+        int i = 0;
+        while (i < length) {
+            int lead = data[i] & 0xFF;
+            int sequenceLength;
+            if (lead < 0x80) {
+                sequenceLength = 1;
+            } else if ((lead & 0xE0) == 0xC0) {
+                sequenceLength = 2;
+            } else if ((lead & 0xF0) == 0xE0) {
+                sequenceLength = 3;
+            } else if ((lead & 0xF8) == 0xF0) {
+                sequenceLength = 4;
+            } else {
+                return false;
+            }
+            if (i + sequenceLength > length) {
+                return true;
+            }
+            for (int j = 1; j < sequenceLength; j++) {
+                if ((data[i + j] & 0xC0) != 0x80) {
+                    return false;
+                }
+            }
+            i += sequenceLength;
+        }
+        return true;
+    }
+
     public ImportTableDataResponse importData(DbContext db, String tableName,
-                                              InputStream inputStream) {
+                                              InputStream inputStream, String encoding) {
         connectionService.openConnection(db);
 
         ActiveConnectionRegistry.ActiveConnection active = ActiveConnectionRegistry.getOwnedConnection(db);
@@ -61,9 +129,11 @@ public class CsvTableDataImporter {
             ImportPrepareSupport.ResolvedTableColumns resolved =
                     prepareSupport.resolveTableColumns(columnManager, connection, db, tableName);
 
-            // Read as UTF-8 and skip an optional BOM written by Excel on export.
-            BufferedReader reader = new BufferedReader(
-                    new java.io.InputStreamReader(inputStream, StandardCharsets.UTF_8));
+            // Resolve the file charset (auto-detect by default) and skip an optional
+            // BOM written by Excel on export.
+            PushbackInputStream pushback = new PushbackInputStream(inputStream, ENCODE_DETECT_SAMPLE_SIZE);
+            Charset charset = resolveCharset(pushback, encoding);
+            BufferedReader reader = new BufferedReader(new java.io.InputStreamReader(pushback, charset));
             reader.mark(1);
             int firstChar = reader.read();
             if (firstChar != '\uFEFF') {

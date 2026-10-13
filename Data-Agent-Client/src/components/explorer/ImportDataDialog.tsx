@@ -6,7 +6,9 @@ import { useTranslation } from 'react-i18next';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../ui/Dialog';
 import { Button } from '../ui/Button';
 import { I18N_KEYS } from '../../constants/i18nKeys';
+import { IMPORT_FILE_TYPES } from '../../constants/fileTypes';
 import { tableDataService } from '../../services/tableData.service';
+import { formatImportResult } from '../../utils/importResult';
 import { useToast } from '../../hooks/useToast';
 
 export interface ImportDataParams {
@@ -15,14 +17,6 @@ export interface ImportDataParams {
   catalog?: string;
   schema?: string;
 }
-
-const IMPORT_FILE_TYPES: Record<string, string> = {
-  csv: 'CSV',
-  json: 'JSON',
-  sql: 'SQL',
-  xlsx: 'XLSX',
-  xls: 'XLS',
-};
 
 interface ImportDataDialogProps {
   open: boolean;
@@ -41,10 +35,16 @@ export function ImportDataDialog({
   const toast = useToast();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [fileEncoding, setFileEncoding] = useState<string>('AUTO');
   const [importing, setImporting] = useState(false);
+
+  const selectedFileType = selectedFile
+    ? IMPORT_FILE_TYPES[selectedFile.name.split('.').pop()?.toLowerCase() ?? '']
+    : undefined;
 
   const resetState = () => {
     setSelectedFile(null);
+    setFileEncoding('AUTO');
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
     }
@@ -96,26 +96,16 @@ export function ImportDataDialog({
         catalog: importParams.catalog,
         schema: importParams.schema,
         fileType,
+        encoding: fileType === 'CSV' ? fileEncoding : undefined,
         file: selectedFile,
       });
 
       if (result.success) {
-        toast.success(t(I18N_KEYS.EXPLORER.IMPORT_SUCCESS, { count: result.insertedRows }));
+        toast.success(formatImportResult(t, fileType, result));
         resetState();
         onOpenChange(false);
       } else {
-        const detail = result.failedAtRow
-          ? (fileType === 'SQL'
-            ? t(I18N_KEYS.EXPLORER.IMPORT_FAILED_STATEMENT, {
-                row: result.failedAtRow,
-                message: result.errorMessage ?? '',
-              })
-            : t(I18N_KEYS.EXPLORER.IMPORT_FAILED_ROW, {
-                row: result.failedAtRow,
-                message: result.errorMessage ?? '',
-              }))
-          : (result.errorMessage ?? t(I18N_KEYS.EXPLORER.IMPORT_FAILED));
-        toast.error(detail);
+        toast.error(formatImportResult(t, fileType, result));
       }
     } catch (error: unknown) {
       if (axios.isAxiosError(error)) {
@@ -188,6 +178,23 @@ export function ImportDataDialog({
               </div>
             </div>
           </div>
+          {selectedFileType === 'CSV' && (
+            <div className="flex flex-col gap-2">
+              <label className="text-sm font-medium theme-text-primary">
+                {t(I18N_KEYS.EXPLORER.IMPORT_FILE_ENCODING)}
+              </label>
+              <select
+                value={fileEncoding}
+                onChange={(e) => setFileEncoding(e.target.value)}
+                disabled={importing}
+                className="h-10 w-full rounded-md border border-gray-300 bg-white px-3 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-primary/40 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-100"
+              >
+                <option value="AUTO">{t(I18N_KEYS.EXPLORER.IMPORT_ENCODING_AUTO)}</option>
+                <option value="UTF-8">UTF-8</option>
+                <option value="GBK">GBK</option>
+              </select>
+            </div>
+          )}
           <div className="flex justify-end gap-2">
             <Button
               variant="outline"

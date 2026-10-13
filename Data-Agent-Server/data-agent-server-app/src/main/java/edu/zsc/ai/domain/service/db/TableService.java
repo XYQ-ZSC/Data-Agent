@@ -52,40 +52,49 @@ public interface TableService {
      * The {@code onBeforeFirstWrite} callback runs after the first page query succeeds
      * and before any byte is written, so the caller can set response headers only when
      * the export can actually start.
+     * @param columns column names to export (case-insensitive, in table order);
+     *                null exports all columns
      */
-    void exportTableDataCsv(DbContext db, String tableName, OutputStream outputStream,
-                            Runnable onBeforeFirstWrite);
+    void exportTableDataCsv(DbContext db, String tableName, List<String> columns,
+                            OutputStream outputStream, Runnable onBeforeFirstWrite);
 
     /**
      * Export all rows of a table as a JSON array of objects (keys are column headers)
      * to the given output stream. Data is fetched page by page and written incrementally.
+     * @param columns column names to export (case-insensitive, in table order);
+     *                null exports all columns
      */
-    void exportTableDataJson(DbContext db, String tableName, OutputStream outputStream,
-                             Runnable onBeforeFirstWrite);
+    void exportTableDataJson(DbContext db, String tableName, List<String> columns,
+                             OutputStream outputStream, Runnable onBeforeFirstWrite);
 
     /**
      * Export all rows of a table as INSERT statements to the given output stream.
      * Data is fetched page by page and written incrementally.
+     * @param columns column names to export (case-insensitive, in table order);
+     *                null exports all columns
      */
-    void exportTableDataSql(DbContext db, String tableName, OutputStream outputStream,
-                            Runnable onBeforeFirstWrite);
+    void exportTableDataSql(DbContext db, String tableName, List<String> columns,
+                            OutputStream outputStream, Runnable onBeforeFirstWrite);
 
     /**
      * Export all rows of a table as an Excel workbook (.xlsx or .xls) to the given
      * output stream. XLSX is written with the streaming SXSSF API; XLS uses HSSF and
      * is limited to 65535 data rows.
      * @param format "XLSX" or "XLS"
+     * @param columns column names to export (case-insensitive, in table order);
+     *                null exports all columns
      */
-    void exportTableDataExcel(DbContext db, String tableName, String format,
+    void exportTableDataExcel(DbContext db, String tableName, String format, List<String> columns,
                               OutputStream outputStream, Runnable onBeforeFirstWrite);
 
     /**
      * Import rows from an uploaded CSV file into a table. The first CSV line must be
      * a header row whose names match table columns. All inserts run inside one
-     * transaction: any row failure triggers a full rollback.
+     * transaction: any row failure triggers a full rollback. The encoding is the
+     * requested file charset: AUTO (default) / UTF-8 / GBK.
      */
     edu.zsc.ai.domain.model.dto.response.db.ImportTableDataResponse importTableDataCsv(
-            DbContext db, String tableName, java.io.InputStream inputStream);
+            DbContext db, String tableName, java.io.InputStream inputStream, String encoding);
 
     /**
      * Import rows from an uploaded JSON file into a table. The file must contain a

@@ -247,33 +247,33 @@ public class TableServiceImpl implements TableService {
 
     
     @Override
-    public void exportTableDataCsv(DbContext db, String tableName, OutputStream outputStream,
-                                   Runnable onBeforeFirstWrite) {
-        csvTableDataExporter.export(db, tableName, outputStream, onBeforeFirstWrite);
+    public void exportTableDataCsv(DbContext db, String tableName, List<String> columns,
+                                   OutputStream outputStream, Runnable onBeforeFirstWrite) {
+        csvTableDataExporter.export(db, tableName, columns, outputStream, onBeforeFirstWrite);
     }
 
     @Override
-    public void exportTableDataJson(DbContext db, String tableName, OutputStream outputStream,
-                                    Runnable onBeforeFirstWrite) {
-        jsonTableDataExporter.export(db, tableName, outputStream, onBeforeFirstWrite);
+    public void exportTableDataJson(DbContext db, String tableName, List<String> columns,
+                                    OutputStream outputStream, Runnable onBeforeFirstWrite) {
+        jsonTableDataExporter.export(db, tableName, columns, outputStream, onBeforeFirstWrite);
     }
 
     @Override
-    public void exportTableDataSql(DbContext db, String tableName, OutputStream outputStream,
-                                   Runnable onBeforeFirstWrite) {
-        sqlTableDataExporter.export(db, tableName, outputStream, onBeforeFirstWrite);
+    public void exportTableDataSql(DbContext db, String tableName, List<String> columns,
+                                   OutputStream outputStream, Runnable onBeforeFirstWrite) {
+        sqlTableDataExporter.export(db, tableName, columns, outputStream, onBeforeFirstWrite);
     }
 
     @Override
-    public void exportTableDataExcel(DbContext db, String tableName, String format,
+    public void exportTableDataExcel(DbContext db, String tableName, String format, List<String> columns,
                                      OutputStream outputStream, Runnable onBeforeFirstWrite) {
-        excelTableDataExporter.export(db, tableName, format, outputStream, onBeforeFirstWrite);
+        excelTableDataExporter.export(db, tableName, format, columns, outputStream, onBeforeFirstWrite);
     }
 
     @Override
     public ImportTableDataResponse importTableDataCsv(DbContext db, String tableName,
-                                                      InputStream inputStream) {
-        return csvTableDataImporter.importData(db, tableName, inputStream);
+                                                      InputStream inputStream, String encoding) {
+        return csvTableDataImporter.importData(db, tableName, inputStream, encoding);
     }
 
     @Override

@@ -31,8 +31,8 @@ public class CsvTableDataExporter {
 
     private final ConnectionService connectionService;
 
-    public void export(DbContext db, String tableName, OutputStream outputStream,
-                       Runnable onBeforeFirstWrite) {
+    public void export(DbContext db, String tableName, List<String> columns,
+                       OutputStream outputStream, Runnable onBeforeFirstWrite) {
         connectionService.openConnection(db);
 
         ActiveConnectionRegistry.ActiveConnection active = ActiveConnectionRegistry.getOwnedConnection(db);
@@ -49,23 +49,26 @@ public class CsvTableDataExporter {
             SqlCommandResult first = provider.getTableData(connection, db.catalog(), db.schema(),
                     tableName, offset, TransferConstants.EXPORT_PAGE_SIZE);
 
+            List<String> headers = first.getHeaders() == null ? List.of() : first.getHeaders();
+            List<Integer> columnIndexes = ExportColumnSelector.resolve(headers, columns);
+
             // First page query succeeded: it is now safe to commit file-download headers.
             onBeforeFirstWrite.run();
 
             List<List<Object>> firstRows = first.getRows();
             if (firstRows == null || firstRows.isEmpty()) {
                 // Empty table: still write the header row when headers are available.
-                if (first.getHeaders() != null && !first.getHeaders().isEmpty()) {
+                if (!headers.isEmpty()) {
                     writer.write('\ufeff');
-                    writeCsvHeader(writer, first.getHeaders());
+                    writeCsvHeader(writer, headers, columnIndexes);
                 }
                 writer.flush();
                 return;
             }
 
             writer.write('\ufeff');
-            writeCsvHeader(writer, first.getHeaders());
-            writeCsvRows(writer, firstRows);
+            writeCsvHeader(writer, headers, columnIndexes);
+            writeCsvRows(writer, firstRows, columnIndexes);
             log.info("CSV export started: connectionId={}, tableName={}, firstPageRows={}",
                     db.connectionId(), tableName, firstRows.size());
 
@@ -77,7 +80,7 @@ public class CsvTableDataExporter {
                 if (rows == null || rows.isEmpty()) {
                     break;
                 }
-                writeCsvRows(writer, rows);
+                writeCsvRows(writer, rows, columnIndexes);
                 if (rows.size() < TransferConstants.EXPORT_PAGE_SIZE) {
                     break;
                 }
@@ -91,23 +94,26 @@ public class CsvTableDataExporter {
         }
     }
 
-    private void writeCsvHeader(BufferedWriter writer, List<String> headers) throws IOException {
-        for (int i = 0; i < headers.size(); i++) {
+    private void writeCsvHeader(BufferedWriter writer, List<String> headers,
+                                List<Integer> columnIndexes) throws IOException {
+        for (int i = 0; i < columnIndexes.size(); i++) {
             if (i > 0) {
                 writer.write(',');
             }
-            writer.write(toCsvField(headers.get(i)));
+            writer.write(toCsvField(headers.get(columnIndexes.get(i))));
         }
         writer.write("\r\n");
     }
 
-    private void writeCsvRows(BufferedWriter writer, List<List<Object>> rows) throws IOException {
+    private void writeCsvRows(BufferedWriter writer, List<List<Object>> rows,
+                              List<Integer> columnIndexes) throws IOException {
         for (List<Object> row : rows) {
-            for (int i = 0; i < row.size(); i++) {
+            for (int i = 0; i < columnIndexes.size(); i++) {
                 if (i > 0) {
                     writer.write(',');
                 }
-                Object value = row.get(i);
+                int index = columnIndexes.get(i);
+                Object value = index < row.size() ? row.get(index) : null;
                 writer.write(toCsvField(value == null ? "" : value.toString()));
             }
             writer.write("\r\n");

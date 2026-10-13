@@ -25,6 +25,8 @@ interface ExplorerTreeProps {
   onCreateTable: (node: ExplorerNode) => void;
   onImportData: (node: ExplorerNode) => void;
   onExportData: (node: ExplorerNode) => void;
+  onExportTablesWizard: (node: ExplorerNode) => void;
+  onImportTablesWizard: (node: ExplorerNode) => void;
 }
 
 export function ExplorerTree({
@@ -46,6 +48,8 @@ export function ExplorerTree({
   onCreateTable,
   onImportData,
   onExportData,
+  onExportTablesWizard,
+  onImportTablesWizard,
 }: ExplorerTreeProps) {
   const { t } = useTranslation();
 
@@ -70,6 +74,8 @@ export function ExplorerTree({
         onCreateTable={onCreateTable}
         onImportData={onImportData}
         onExportData={onExportData}
+        onExportTablesWizard={onExportTablesWizard}
+        onImportTablesWizard={onImportTablesWizard}
       />
     );
   };

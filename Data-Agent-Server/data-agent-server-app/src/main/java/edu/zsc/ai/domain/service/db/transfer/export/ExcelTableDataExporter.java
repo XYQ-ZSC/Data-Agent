@@ -41,7 +41,7 @@ public class ExcelTableDataExporter {
 
     private final ConnectionService connectionService;
 
-    public void export(DbContext db, String tableName, String format,
+    public void export(DbContext db, String tableName, String format, List<String> columns,
                        OutputStream outputStream, Runnable onBeforeFirstWrite) {
         boolean xlsx = !"XLS".equalsIgnoreCase(format);
 
@@ -67,6 +67,9 @@ public class ExcelTableDataExporter {
             SqlCommandResult first = provider.getTableData(connection, db.catalog(), db.schema(),
                     tableName, 0, TransferConstants.EXPORT_PAGE_SIZE);
 
+            List<String> headers = first.getHeaders() == null ? List.of() : first.getHeaders();
+            List<Integer> columnIndexes = ExportColumnSelector.resolve(headers, columns);
+
             // First page query succeeded: it is now safe to commit file-download headers.
             onBeforeFirstWrite.run();
 
@@ -88,19 +91,18 @@ public class ExcelTableDataExporter {
             dateStyle.setDataFormat(workbook.getCreationHelper().createDataFormat()
                     .getFormat("yyyy-mm-dd hh:mm:ss"));
 
-            List<String> headers = first.getHeaders();
             Sheet sheet = workbook.createSheet(buildSafeSheetName(tableName));
             Row headerRow = sheet.createRow(0);
-            for (int i = 0; i < headers.size(); i++) {
+            for (int i = 0; i < columnIndexes.size(); i++) {
                 Cell cell = headerRow.createCell(i);
-                cell.setCellValue(headers.get(i));
+                cell.setCellValue(headers.get(columnIndexes.get(i)));
                 cell.setCellStyle(headerStyle);
             }
 
             int rowIndex = 1;
             List<List<Object>> firstRows = first.getRows();
             if (firstRows != null && !firstRows.isEmpty()) {
-                rowIndex = writeExcelRows(sheet, firstRows, rowIndex, dateStyle);
+                rowIndex = writeExcelRows(sheet, firstRows, rowIndex, columnIndexes, dateStyle);
                 log.info("Excel export started: connectionId={}, tableName={}, format={}, firstPageRows={}",
                         db.connectionId(), tableName, format, firstRows.size());
 
@@ -112,7 +114,7 @@ public class ExcelTableDataExporter {
                     if (rows == null || rows.isEmpty()) {
                         break;
                     }
-                    rowIndex = writeExcelRows(sheet, rows, rowIndex, dateStyle);
+                    rowIndex = writeExcelRows(sheet, rows, rowIndex, columnIndexes, dateStyle);
                     if (rows.size() < TransferConstants.EXPORT_PAGE_SIZE) {
                         break;
                     }
@@ -136,13 +138,14 @@ public class ExcelTableDataExporter {
     }
 
     private int writeExcelRows(Sheet sheet, List<List<Object>> rows, int startRowIndex,
-                               CellStyle dateStyle) {
+                               List<Integer> columnIndexes, CellStyle dateStyle) {
         int rowIndex = startRowIndex;
         for (List<Object> rowData : rows) {
             Row row = sheet.createRow(rowIndex);
-            for (int columnIndex = 0; columnIndex < rowData.size(); columnIndex++) {
-                Cell cell = row.createCell(columnIndex);
-                setExcelCellValue(cell, rowData.get(columnIndex), dateStyle);
+            for (int i = 0; i < columnIndexes.size(); i++) {
+                int columnIndex = columnIndexes.get(i);
+                Cell cell = row.createCell(i);
+                setExcelCellValue(cell, columnIndex < rowData.size() ? rowData.get(columnIndex) : null, dateStyle);
             }
             rowIndex++;
         }

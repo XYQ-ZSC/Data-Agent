@@ -14,6 +14,10 @@ import { ExplorerTree } from './ExplorerTree';
 import { ExplorerDialogs } from './ExplorerDialogs';
 import { ExportDataDialog } from './ExportDataDialog';
 import type { ExportDataParams } from './ExportDataDialog';
+import { BatchExportDialog } from './BatchExportDialog';
+import type { BatchExportParams } from './BatchExportDialog';
+import { BatchImportDialog } from './BatchImportDialog';
+import type { BatchImportParams } from './BatchImportDialog';
 import { ImportDataDialog } from './ImportDataDialog';
 import type { ImportDataParams } from './ImportDataDialog';
 
@@ -128,6 +132,36 @@ export function DatabaseExplorer() {
     setExportDialogOpen(true);
   };
 
+  // Batch export wizard (right-click the tables folder)
+  const [batchExportOpen, setBatchExportOpen] = useState(false);
+  const [batchExportTargetPath, setBatchExportTargetPath] = useState('');
+  const [batchExportParams, setBatchExportParams] = useState<BatchExportParams | null>(null);
+  const handleExportTablesWizard = (node: ExplorerNode) => {
+    const conn = node.dbConnection ?? connections.find((c) => String(c.id) === node.connectionId);
+    const catalog = node.catalog ?? conn?.database ?? '';
+    setBatchExportTargetPath(`@${conn?.host ?? ''}/${catalog}`);
+    setBatchExportParams({
+      connectionId: Number(node.connectionId),
+      catalog: catalog || undefined,
+      schema: node.schema || undefined,
+    });
+    setBatchExportOpen(true);
+  };
+
+  // Batch import wizard (right-click the tables folder)
+  const [batchImportOpen, setBatchImportOpen] = useState(false);
+  const [batchImportParams, setBatchImportParams] = useState<BatchImportParams | null>(null);
+  const handleImportTablesWizard = (node: ExplorerNode) => {
+    const conn = node.dbConnection ?? connections.find((c) => String(c.id) === node.connectionId);
+    const catalog = node.catalog ?? conn?.database ?? '';
+    setBatchImportParams({
+      connectionId: Number(node.connectionId),
+      catalog: catalog || undefined,
+      schema: node.schema || undefined,
+    });
+    setBatchImportOpen(true);
+  };
+
   // Import data dialog
   const [importDialogOpen, setImportDialogOpen] = useState(false);
   const [importTargetPath, setImportTargetPath] = useState('');
@@ -229,6 +263,8 @@ export function DatabaseExplorer() {
           onCreateTable={handleCreateTable}
           onImportData={handleImportData}
           onExportData={handleExportData}
+          onExportTablesWizard={handleExportTablesWizard}
+          onImportTablesWizard={handleImportTablesWizard}
         />
       </div>
 
@@ -277,6 +313,19 @@ export function DatabaseExplorer() {
         onOpenChange={setExportDialogOpen}
         targetTablePath={exportTargetPath}
         exportParams={exportParams}
+      />
+
+      <BatchExportDialog
+        open={batchExportOpen}
+        onOpenChange={setBatchExportOpen}
+        targetPath={batchExportTargetPath}
+        exportParams={batchExportParams}
+      />
+
+      <BatchImportDialog
+        open={batchImportOpen}
+        onOpenChange={setBatchImportOpen}
+        importParams={batchImportParams}
       />
 
       <ImportDataDialog
