@@ -43,6 +43,34 @@ export interface UpdateTableRowParams {
   force?: boolean;
 }
 
+export interface ExportTableParams {
+  connectionId: number;
+  tableName: string;
+  catalog?: string;
+  schema?: string;
+  fileType: string;
+  /** Column names to export; omit for all columns. */
+  columns?: string[];
+}
+
+export interface ImportTableDataParams {
+  connectionId: number;
+  tableName: string;
+  catalog?: string;
+  schema?: string;
+  fileType: string;
+  encoding?: string;
+  file: File;
+}
+
+export interface ImportTableDataResult {
+  success: boolean;
+  totalRows: number;
+  insertedRows: number;
+  failedAtRow: number | null;
+  errorMessage: string | null;
+}
+
 export type BatchRowOperationType = 'INSERT' | 'UPDATE' | 'DELETE';
 
 export interface BatchRowOperation {
@@ -174,6 +202,49 @@ export const tableDataService = {
       setValues: params.setValues,
       matchValues: params.matchValues,
       force: params.force ?? false,
+    });
+    return response.data;
+  },
+
+  exportTable: async (params: ExportTableParams): Promise<Blob> => {
+    const query: Record<string, string | number> = {
+      connectionId: params.connectionId,
+      tableName: params.tableName,
+      fileType: params.fileType,
+    };
+    if (params.catalog != null && params.catalog !== '') query.catalog = params.catalog;
+    if (params.schema != null && params.schema !== '') query.schema = params.schema;
+    if (params.columns != null && params.columns.length > 0) {
+      query.columns = params.columns.join(',');
+    }
+
+    const response = await http.get<Blob>(ApiPaths.TABLE_EXPORT, {
+      params: query,
+      responseType: 'blob',
+      timeout: 300000,
+    });
+    return response.data;
+  },
+
+  importTableData: async (params: ImportTableDataParams): Promise<ImportTableDataResult> => {
+    const formData = new FormData();
+    formData.append('connectionId', String(params.connectionId));
+    formData.append('tableName', params.tableName);
+    formData.append('fileType', params.fileType);
+    formData.append('file', params.file);
+    if (params.catalog != null && params.catalog !== '') {
+      formData.append('catalog', params.catalog);
+    }
+    if (params.schema != null && params.schema !== '') {
+      formData.append('schema', params.schema);
+    }
+    if (params.encoding != null && params.encoding !== '') {
+      formData.append('encoding', params.encoding);
+    }
+
+    const response = await http.post<ImportTableDataResult>(ApiPaths.TABLE_IMPORT, formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+      timeout: 600000,
     });
     return response.data;
   },

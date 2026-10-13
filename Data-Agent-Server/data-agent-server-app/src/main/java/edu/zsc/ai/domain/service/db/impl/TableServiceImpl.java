@@ -6,9 +6,12 @@ import edu.zsc.ai.domain.model.dto.request.db.BatchTableRowOperationRequest;
 import edu.zsc.ai.domain.model.dto.request.db.TableRowValueRequest;
 import edu.zsc.ai.domain.model.dto.response.db.BatchTableRowsResponse;
 import edu.zsc.ai.domain.model.dto.response.db.ExecuteSqlResponse;
+import edu.zsc.ai.domain.model.dto.response.db.ImportTableDataResponse;
 import edu.zsc.ai.domain.model.dto.response.db.TableDataResponse;
 import edu.zsc.ai.domain.service.db.ConnectionService;
 import edu.zsc.ai.domain.service.db.TableService;
+import edu.zsc.ai.domain.service.db.transfer.TableDataExporter;
+import edu.zsc.ai.domain.service.db.transfer.TableDataTransferRegistry;
 import edu.zsc.ai.plugin.capability.TableManager;
 import edu.zsc.ai.plugin.manager.DefaultPluginManager;
 import edu.zsc.ai.plugin.model.command.sql.SqlCommandResult;
@@ -18,17 +21,26 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
+import java.io.InputStream;
 import java.sql.Connection;
 import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.List;
 
+/**
+ * Core table operations: metadata (list/DDL/count), table lifecycle, single-row
+ * changes and paged data queries. Format-specific export and import work is
+ * delegated to dedicated components under
+ * {@link edu.zsc.ai.domain.service.db.transfer}.
+ */
 @Slf4j
 @Service
 @RequiredArgsConstructor
 public class TableServiceImpl implements TableService {
 
     private final ConnectionService connectionService;
+
+    private final TableDataTransferRegistry transferRegistry;
 
     @Override
     public List<String> getTables(DbContext db) {
@@ -219,8 +231,19 @@ public class TableServiceImpl implements TableService {
     }
 
     @Override
+    public TableDataExporter resolveExporter(String fileType) {
+        return transferRegistry.resolveExporter(fileType);
+    }
+
+    @Override
+    public ImportTableDataResponse importTableData(DbContext db, String tableName, String fileType,
+                                                   InputStream inputStream, String encoding) {
+        return transferRegistry.resolveImporter(fileType).importData(db, tableName, inputStream, encoding);
+    }
+
+    @Override
     public BatchTableRowsResponse batchTableRows(DbContext db, String tableName,
-                                                  List<BatchTableRowOperationRequest> operations, boolean force) {
+                                                 List<BatchTableRowOperationRequest> operations, boolean force) {
         connectionService.openConnection(db);
 
         ActiveConnectionRegistry.ActiveConnection active = ActiveConnectionRegistry.getOwnedConnection(db);
@@ -328,5 +351,6 @@ public class TableServiceImpl implements TableService {
             }
         }
         return null;
+
     }
 }
