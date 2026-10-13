@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { Handle, Position, useNodeId, useReactFlow, useUpdateNodeInternals, type Node, type NodeProps } from '@xyflow/react';
+import { Handle, Position, useNodeId, useUpdateNodeInternals, type Node, type NodeProps } from '@xyflow/react';
 import { useTranslation } from 'react-i18next';
 import { ChevronDown, ChevronUp, KeyRound } from 'lucide-react';
 import { I18N_KEYS } from '../../constants/i18nKeys';
@@ -37,7 +37,6 @@ function SideHandles({ role, side, column }: { role: 'source' | 'target'; side: 
 export function ErTableNode({ data }: NodeProps<ErTableNodeType>) {
   const { t } = useTranslation();
   const interaction = useErDiagramInteraction();
-  const { setNodes } = useReactFlow();
   const nodeId = useNodeId();
   const updateInternals = useUpdateNodeInternals();
   const table = data.table;
@@ -82,6 +81,7 @@ export function ErTableNode({ data }: NodeProps<ErTableNodeType>) {
         )}
         <button
           type="button"
+          data-er-export-hidden
           className="nodrag nopan shrink-0 rounded border theme-border px-1 text-[10px] font-normal theme-text-primary"
           title={t(I18N_KEYS.EXPLORER.VIEW_DATA)}
           onPointerDown={(event) => event.stopPropagation()}
@@ -95,6 +95,7 @@ export function ErTableNode({ data }: NodeProps<ErTableNodeType>) {
         </button>
         <button
           type="button"
+          data-er-export-hidden
           className="nodrag nopan shrink-0 rounded border theme-border px-1 text-[10px] font-normal theme-text-primary"
           title={t(I18N_KEYS.EXPLORER.VIEW_DDL)}
           onPointerDown={(event) => event.stopPropagation()}
@@ -155,20 +156,13 @@ export function ErTableNode({ data }: NodeProps<ErTableNodeType>) {
         <button
           type="button"
           className="nodrag nopan relative flex h-[22px] w-full shrink-0 items-center justify-center gap-1 border-t theme-border text-[10px] theme-text-secondary"
+          disabled={interaction.busy}
           onPointerDown={(event) => event.stopPropagation()}
           onDoubleClick={(event) => event.stopPropagation()}
           onClick={(event) => {
             event.stopPropagation();
             if (!nodeId) return;
-            const nextExpanded = !expanded;
-            setNodes((current) => current.map((node) => {
-              if (node.id !== nodeId) return node;
-              return {
-                ...node,
-                height: cardHeight(table.columns.length, nextExpanded),
-                data: { ...node.data, expanded: nextExpanded },
-              };
-            }));
+            interaction.toggleExpanded(nodeId);
           }}
         >
           <Handle type="target" position={Position.Left} id={overflowHandleId('target', 'left')} isConnectable={false} className="!border-0 !bg-transparent !opacity-0" />
