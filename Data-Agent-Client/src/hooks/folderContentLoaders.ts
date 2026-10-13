@@ -10,7 +10,7 @@ import { primaryKeyService } from '../services/primaryKey.service';
 import { ExplorerNodeType, ExplorerIdPrefix, TRIGGER_ON_TABLE_FORMAT, INDEX_UNIQUE_SUFFIX } from '../constants/explorer';
 import type { ExplorerNode } from '../types/explorer';
 import type { ParameterInfo } from '../services/function.service';
-import { fetchExplorerColumns, fetchExplorerTables, fetchExplorerViews } from '../lib/explorerMetadataCache';
+import { fetchExplorerTables, fetchExplorerViews } from '../lib/explorerMetadataCache';
 
 export function formatRoutineSignature(
   parameters: ParameterInfo[] | undefined | null,
@@ -112,9 +112,7 @@ async function loadTriggers(ctx: FolderLoadContext): Promise<ExplorerNode[]> {
 async function loadColumns(ctx: FolderLoadContext): Promise<ExplorerNode[]> {
   const { connId, catalog, schema, folderId: fid, tableName } = ctx;
   if (!tableName) return [];
-  const columns = ctx.queryClient
-    ? await fetchExplorerColumns(ctx.queryClient, connId, tableName, catalog, schema, { force: ctx.force })
-    : await columnService.listColumns(connId, tableName, catalog, schema);
+  const columns = await columnService.listColumns(connId, tableName, catalog, schema);
   return columns.map((col) => ({
     id: `${fid}${ExplorerIdPrefix.COLUMN}${col.name}`,
     name: col.name,

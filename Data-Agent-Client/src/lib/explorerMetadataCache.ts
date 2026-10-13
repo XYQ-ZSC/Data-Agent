@@ -1,5 +1,4 @@
 import type { QueryClient } from '@tanstack/react-query';
-import { columnService, type ColumnMetadata } from '../services/column.service';
 import { databaseService } from '../services/database.service';
 import { functionService, type FunctionMetadata } from '../services/function.service';
 import { procedureService, type ProcedureMetadata } from '../services/procedure.service';
@@ -38,14 +37,6 @@ export const getExplorerProceduresQueryKey = (connectionId: string, catalog?: st
 
 export const getExplorerTriggersQueryKey = (connectionId: string, catalog?: string, schema?: string) =>
   [EXPLORER_METADATA_QUERY_ROOT, 'triggers', connectionId, normalizeScope(catalog), normalizeScope(schema)] as const;
-
-export const getExplorerColumnsQueryKey = (
-  connectionId: string,
-  catalog: string | undefined,
-  schema: string | undefined,
-  tableName: string,
-) =>
-  [EXPLORER_METADATA_QUERY_ROOT, 'columns', connectionId, normalizeScope(catalog), normalizeScope(schema), tableName] as const;
 
 async function fetchCachedData<T>(
   queryClient: QueryClient,
@@ -205,22 +196,6 @@ export function fetchExplorerProcedures(
   );
 }
 
-export function fetchExplorerColumns(
-  queryClient: QueryClient,
-  connectionId: string,
-  tableName: string,
-  catalog?: string,
-  schema?: string,
-  options?: CachedListOptions
-): Promise<ColumnMetadata[]> {
-  return fetchCachedData(
-    queryClient,
-    getExplorerColumnsQueryKey(connectionId, catalog, schema, tableName),
-    () => columnService.listColumns(connectionId, tableName, catalog, schema),
-    options
-  );
-}
-
 export function fetchExplorerTriggers(
   queryClient: QueryClient,
   connectionId: string,
@@ -244,5 +219,4 @@ export function clearExplorerMetadataForConnection(queryClient: QueryClient, con
   queryClient.removeQueries({ queryKey: [EXPLORER_METADATA_QUERY_ROOT, 'functions', connectionId] });
   queryClient.removeQueries({ queryKey: [EXPLORER_METADATA_QUERY_ROOT, 'procedures', connectionId] });
   queryClient.removeQueries({ queryKey: [EXPLORER_METADATA_QUERY_ROOT, 'triggers', connectionId] });
-  queryClient.removeQueries({ queryKey: [EXPLORER_METADATA_QUERY_ROOT, 'columns', connectionId] });
 }

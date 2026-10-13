@@ -392,6 +392,7 @@ export function ErDiagramTab({ metadata }: ErDiagramTabProps) {
   const [draggingTableId, setDraggingTableId] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
   const [tableNameFilter, setTableNameFilter] = useState('');
+  const [exactTableFilter, setExactTableFilter] = useState(false);
   const drag = useRef<{
     pointerX: number;
     pointerY: number;
@@ -402,7 +403,7 @@ export function ErDiagramTab({ metadata }: ErDiagramTabProps) {
   } | null>(null);
   const viewRef = useRef(view);
   if (!drag.current) viewRef.current = view;
-  const cardDrag = useRef<{ id: string; pointerX: number; pointerY: number; x: number; y: number } | null>(null);
+  const cardDrag = useRef<{ id: string; pointerX: number; pointerY: number; x: number; y: number; moved: boolean } | null>(null);
   const canvasRef = useRef<HTMLDivElement>(null);
   const viewportRef = useRef<HTMLDivElement>(null);
   const rowRefs = useRef(new Map<string, HTMLDivElement>());
@@ -416,6 +417,7 @@ export function ErDiagramTab({ metadata }: ErDiagramTabProps) {
     setPinned(null);
     setCollapseJunctionTables(false);
     setTableNameFilter('');
+    setExactTableFilter(false);
     setPositions({});
     setDraggingTableId(null);
     tableService.getErDiagram(
@@ -447,8 +449,8 @@ export function ErDiagramTab({ metadata }: ErDiagramTabProps) {
     [collapseJunctionTables, diagram],
   );
   const shown = useMemo(
-    () => (collapsed ? filterTablesByName(collapsed, tableNameFilter) : null),
-    [collapsed, tableNameFilter],
+    () => (collapsed ? filterTablesByName(collapsed, tableNameFilter, exactTableFilter) : null),
+    [collapsed, exactTableFilter, tableNameFilter],
   );
 
   useEffect(() => {
@@ -772,6 +774,31 @@ export function ErDiagramTab({ metadata }: ErDiagramTabProps) {
     }
   };
 
+  const openExternalErDiagram = (table: ErTable) => {
+    if (!table.external) return;
+    const catalog = table.catalog || '';
+    const schema = table.schema || '';
+    if (catalog === (metadata.catalog || '') && schema === (metadata.schema || '')) return;
+    const scope = schema || catalog;
+    if (!scope) return;
+    const connectionId = Number(metadata.connectionId);
+    openTab({
+      id: `er-${connectionId}-${catalog}-${schema}`,
+      name: `ER ${scope}`,
+      type: 'er',
+      content: '',
+      metadata: {
+        connectionId,
+        dbType: metadata.dbType,
+        connectionName: metadata.connectionName,
+        databaseName: catalog || schema || null,
+        schemaName: schema || null,
+        catalog: catalog || null,
+        schema: schema || null,
+      },
+    });
+  };
+
   const relationSummary = activeRelations.map((relation) => {
     const via = viaTableName(relation);
     const text = `${relationMapping(relation)} ${cardinalityLabel(relation)}`;
@@ -815,14 +842,25 @@ export function ErDiagramTab({ metadata }: ErDiagramTabProps) {
             </label>
           )}
           {diagram && diagram.tables.length > 0 && (
-            <input
-              type="search"
-              value={tableNameFilter}
-              onChange={(event) => setTableNameFilter(event.target.value)}
-              placeholder={t(I18N_KEYS.EXPLORER.ER_DIAGRAM_FILTER)}
-              aria-label={t(I18N_KEYS.EXPLORER.ER_DIAGRAM_FILTER)}
-              className="h-6 w-36 rounded border theme-border bg-transparent px-2 text-[11px] theme-text-primary outline-none"
-            />
+            <>
+              <input
+                type="search"
+                value={tableNameFilter}
+                onChange={(event) => setTableNameFilter(event.target.value)}
+                placeholder={t(I18N_KEYS.EXPLORER.ER_DIAGRAM_FILTER)}
+                aria-label={t(I18N_KEYS.EXPLORER.ER_DIAGRAM_FILTER)}
+                className="h-6 w-52 rounded border theme-border bg-transparent px-2 text-[11px] theme-text-primary outline-none"
+              />
+              <label className="inline-flex items-center gap-1">
+                <input
+                  type="checkbox"
+                  className="accent-violet-600"
+                  checked={exactTableFilter}
+                  onChange={(event) => setExactTableFilter(event.target.checked)}
+                />
+                {t(I18N_KEYS.EXPLORER.ER_DIAGRAM_FILTER_EXACT)}
+              </label>
+            </>
           )}
           {shown && shown.tables.length > 0 && (
             <button
@@ -982,28 +1020,38 @@ export function ErDiagramTab({ metadata }: ErDiagramTabProps) {
                   key={id}
                   className={`absolute overflow-hidden rounded-md border theme-bg-popup shadow-sm ${table.external ? 'border-dashed border-rose-400/80' : 'theme-border'}`}
                   style={{ left: box.x, top: box.y, width: box.width, height: box.height }}
+                  onDoubleClick={(event) => {
+                    if (!table.external) return;
+                    event.stopPropagation();
+                    openExternalErDiagram(table);
+                  }}
                 >
                   <div
                     className="flex h-[34px] cursor-grab select-none items-center gap-1 border-b theme-border px-2 text-xs font-semibold theme-text-primary active:cursor-grabbing"
                     style={{ cursor: draggingTableId === id ? 'grabbing' : undefined }}
-                    title={t(I18N_KEYS.EXPLORER.ER_DIAGRAM_DRAG_TABLE)}
+                    title={table.external
+                      ? `${t(I18N_KEYS.EXPLORER.ER_DIAGRAM_OPEN_EXTERNAL)}。${t(I18N_KEYS.EXPLORER.ER_DIAGRAM_DRAG_TABLE)}`
+                      : t(I18N_KEYS.EXPLORER.ER_DIAGRAM_DRAG_TABLE)}
                     onPointerDown={(event) => {
                       if (event.button !== 0) return;
                       event.stopPropagation();
-                      event.preventDefault();
                       cardDrag.current = {
                         id,
                         pointerX: event.clientX,
                         pointerY: event.clientY,
                         x: box.x,
                         y: box.y,
+                        moved: false,
                       };
-                      setDraggingTableId(id);
                       event.currentTarget.setPointerCapture(event.pointerId);
                     }}
                     onPointerMove={(event) => {
                       const current = cardDrag.current;
                       if (!current || current.id !== id) return;
+                      const distance = Math.hypot(event.clientX - current.pointerX, event.clientY - current.pointerY);
+                      if (!current.moved && distance < 4) return;
+                      current.moved = true;
+                      setDraggingTableId(id);
                       const x = Math.max(CARD_EDGE, current.x + (event.clientX - current.pointerX) / view.scale);
                       const y = Math.max(CARD_EDGE, current.y + (event.clientY - current.pointerY) / view.scale);
                       setPositions((previous) => ({ ...previous, [id]: { x, y } }));
@@ -1035,6 +1083,7 @@ export function ErDiagramTab({ metadata }: ErDiagramTabProps) {
                       className="shrink-0 rounded border theme-border px-1 text-[10px] font-normal theme-text-primary"
                       title={t(I18N_KEYS.EXPLORER.VIEW_DATA)}
                       onPointerDown={(event) => event.stopPropagation()}
+                      onDoubleClick={(event) => event.stopPropagation()}
                       onClick={(event) => {
                         event.stopPropagation();
                         openTableData(table);
@@ -1047,6 +1096,7 @@ export function ErDiagramTab({ metadata }: ErDiagramTabProps) {
                       className="shrink-0 rounded border theme-border px-1 text-[10px] font-normal theme-text-primary"
                       title={t(I18N_KEYS.EXPLORER.VIEW_DDL)}
                       onPointerDown={(event) => event.stopPropagation()}
+                      onDoubleClick={(event) => event.stopPropagation()}
                       onClick={(event) => {
                         event.stopPropagation();
                         void openTableDdl(table);
@@ -1078,7 +1128,7 @@ export function ErDiagramTab({ metadata }: ErDiagramTabProps) {
                             event.stopPropagation();
                           }}
                           onClick={(event) => {
-                            if (!linked) return;
+                            if (!linked || event.detail > 1) return;
                             event.stopPropagation();
                             togglePin({ tableId: id, column: column.name });
                           }}
