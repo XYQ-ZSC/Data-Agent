@@ -156,6 +156,8 @@ export function DatabaseExplorer() {
         FUNCTION: FolderName.ROUTINES,
         PROCEDURE: FolderName.ROUTINES,
         TRIGGER: FolderName.TRIGGERS,
+        SEQUENCE: FolderName.SEQUENCES,
+        CONSTRAINT: FolderName.CONSTRAINTS,
       };
       const folderName = folderByType[detail.objectType];
       const nodes: ExplorerNode[] = [];

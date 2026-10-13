@@ -544,6 +544,10 @@
     "folder_views": "视图",
     "folder_routines": "例程",
     "folder_triggers": "触发器",
+    "folder_sequences": "序列",
+    "folder_constraints": "约束",
+    "sequence_ddl_title": "序列 DDL",
+    "constraint_ddl_title": "约束 DDL",
     "folder_columns": "列",
     "folder_keys": "主键",
     "folder_indexes": "索引",
@@ -579,6 +583,12 @@
     "delete_trigger": "删除触发器",
     "delete_trigger_confirm": "确定要删除触发器 \"{{name}}\" 吗？此操作不可恢复。",
     "delete_trigger_failed": "删除触发器失败",
+    "delete_sequence": "删除序列",
+    "delete_sequence_confirm": "确定要删除序列 \"{{name}}\" 吗？此操作不可恢复。",
+    "delete_sequence_failed": "删除序列失败",
+    "delete_constraint": "删除约束",
+    "delete_constraint_confirm": "确定要删除约束 \"{{name}}\" 吗？此操作不可恢复。",
+    "delete_constraint_failed": "删除约束失败",
     "delete_all_in_folder": "删除全部",
     "delete_all_in_folder_confirm": "确定要删除 \"{{name}}\" 文件夹下的全部 {{count}} 个对象吗？此操作不可恢复。",
     "delete_folder_success": "已成功删除文件夹下的所有对象",
@@ -940,5 +950,30 @@
     "needs_review": "待审核",
     "manual": "手动",
     "agent": "Agent"
+  },
+  "sql_completion": {
+    "types": {
+      "keyword": "关键字",
+      "function": "函数",
+      "procedure": "存储过程",
+      "schema": "Schema",
+      "table": "表",
+      "view": "视图",
+      "column": "字段",
+      "alias": "别名",
+      "snippet": "SQL 模板",
+      "all_columns": "全部字段",
+      "join": "JOIN 关联",
+      "variable": "变量",
+      "package": "包",
+      "synonym": "同义词"
+    },
+    "templates": {
+      "sel": "从表中查询数据",
+      "selc": "按条件查询表中的数据",
+      "ins": "向表中插入数据",
+      "upd": "更新表中的数据",
+      "del": "删除表中的数据"
+    }
   }
 }

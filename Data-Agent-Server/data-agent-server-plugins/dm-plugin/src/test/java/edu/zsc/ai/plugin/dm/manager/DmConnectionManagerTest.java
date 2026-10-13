@@ -7,7 +7,6 @@ import org.junit.jupiter.api.Test;
 import org.mockito.MockedStatic;
 
 import java.sql.Connection;
-import java.sql.DriverManager;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.Properties;
@@ -40,9 +39,8 @@ class DmConnectionManagerTest {
                 () -> "dm.jdbc.driver.DmDriver", () -> "jdbc:dm://%s:%d/%s", () -> 5236);
 
         ConnectionFailureException thrown;
-        try (MockedStatic<DriverLoader> loader = mockStatic(DriverLoader.class);
-             MockedStatic<DriverManager> driverManager = mockStatic(DriverManager.class)) {
-            driverManager.when(() -> DriverManager.getConnection(anyString(), any(Properties.class)))
+        try (MockedStatic<DriverLoader> loader = mockStatic(DriverLoader.class)) {
+            loader.when(() -> DriverLoader.connect(any(ConnectionConfig.class), anyString(), anyString(), any(Properties.class)))
                     .thenReturn(connection);
 
             thrown = assertThrows(ConnectionFailureException.class, () -> manager.connect(config));
@@ -80,12 +78,9 @@ class DmConnectionManagerTest {
                 () -> "dm.jdbc.driver.DmDriver", () -> "jdbc:dm://%s:%d", () -> 5236);
 
         ConnectionFailureException thrown;
-        // constructed up front: SQLException.<init> calls DriverManager.getLogWriter(),
-        // which would hit the MockedStatic while the stubbing is being registered
         SQLException authFailure = new SQLException("auth failed for user SYSDBA s3cret", "22000", -2501);
-        try (MockedStatic<DriverLoader> loader = mockStatic(DriverLoader.class);
-             MockedStatic<DriverManager> driverManager = mockStatic(DriverManager.class)) {
-            driverManager.when(() -> DriverManager.getConnection(anyString(), any(Properties.class)))
+        try (MockedStatic<DriverLoader> loader = mockStatic(DriverLoader.class)) {
+            loader.when(() -> DriverLoader.connect(any(ConnectionConfig.class), anyString(), anyString(), any(Properties.class)))
                     .thenThrow(authFailure);
 
             thrown = assertThrows(ConnectionFailureException.class, () -> manager.connect(config));

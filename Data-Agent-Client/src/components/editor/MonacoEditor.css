@@ -1,0 +1,10 @@
+.sql-completion-editor .monaco-editor .suggest-widget .monaco-list .monaco-list-row > .contents > .main > .right {
+  justify-content: flex-end;
+  text-align: right;
+}
+
+.sql-completion-editor .monaco-editor .suggest-widget .monaco-list .monaco-list-row > .contents > .main > .right > .details-label {
+  opacity: 1;
+  font-size: 100%;
+  font-weight: 500;
+}

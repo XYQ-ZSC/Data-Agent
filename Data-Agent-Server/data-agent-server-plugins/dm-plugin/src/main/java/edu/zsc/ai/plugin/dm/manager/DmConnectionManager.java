@@ -8,7 +8,6 @@ import edu.zsc.ai.plugin.dm.util.DmJdbcConnectionBuilder;
 import edu.zsc.ai.plugin.driver.DriverLoader;
 
 import java.sql.Connection;
-import java.sql.DriverManager;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.Properties;
@@ -53,14 +52,6 @@ public final class DmConnectionManager implements ConnectionManager {
 
     @Override
     public Connection connect(ConnectionConfig config) {
-        try {
-            DriverLoader.loadDriver(config, driverClassNameSupplier.get());
-        } catch (RuntimeException e) {
-            throw new ConnectionFailureException(
-                    ConnectionFailureException.Category.DRIVER_LOAD,
-                    "Failed to load DM JDBC driver: " + e.getMessage(), e);
-        }
-
         String jdbcUrl = connectionBuilder.buildUrl(
                 config,
                 jdbcUrlTemplateSupplier.get(),
@@ -74,7 +65,11 @@ public final class DmConnectionManager implements ConnectionManager {
 
         Connection connection;
         try {
-            connection = DriverManager.getConnection(jdbcUrl, properties);
+            connection = DriverLoader.connect(config, driverClassNameSupplier.get(), jdbcUrl, properties);
+        } catch (RuntimeException e) {
+            throw new ConnectionFailureException(
+                    ConnectionFailureException.Category.DRIVER_LOAD,
+                    "Failed to load DM JDBC driver: " + sanitize(e.getMessage(), config), e);
         } catch (SQLException e) {
             ConnectionFailureException.Category category = classify(e.getSQLState(), e.getErrorCode());
             String errorMessage = String.format("Failed to connect to DM database at %s: %s",

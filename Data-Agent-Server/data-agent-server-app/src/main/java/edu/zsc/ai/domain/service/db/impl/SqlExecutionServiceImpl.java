@@ -7,6 +7,11 @@ import edu.zsc.ai.domain.model.dto.response.db.ExecuteSqlResponse;
 import edu.zsc.ai.domain.service.db.ConnectionAccessService;
 import edu.zsc.ai.domain.service.db.ConnectionService;
 import edu.zsc.ai.domain.service.db.SqlExecutionService;
+import edu.zsc.ai.domain.service.db.SqlExecutionOptions;
+import edu.zsc.ai.context.RequestContext;
+import edu.zsc.ai.common.enums.org.WorkspaceTypeEnum;
+import edu.zsc.ai.plugin.execution.StatementCancellationRegistry;
+import edu.zsc.ai.plugin.execution.StatementCancellationRegistry.CancelOutcome;
 import edu.zsc.ai.plugin.capability.CommandExecutor;
 import edu.zsc.ai.plugin.capability.SqlValidator;
 import edu.zsc.ai.plugin.manager.DefaultPluginManager;
@@ -14,6 +19,7 @@ import edu.zsc.ai.plugin.model.command.sql.SqlBatchCommandResult;
 import edu.zsc.ai.plugin.model.command.sql.SqlCommandRequest;
 import edu.zsc.ai.plugin.model.command.sql.SqlCommandResult;
 import edu.zsc.ai.plugin.model.sql.SqlValidationResult;
+import edu.zsc.ai.plugin.model.sql.SqlType;
 import edu.zsc.ai.plugin.model.transaction.BatchExecutionState;
 import edu.zsc.ai.plugin.model.transaction.BatchMode;
 import edu.zsc.ai.plugin.model.transaction.StatementExecutionState;
@@ -26,6 +32,10 @@ import java.sql.Connection;
 import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
+import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 @Slf4j
 @Service
@@ -34,6 +44,12 @@ public class SqlExecutionServiceImpl implements SqlExecutionService {
 
     private final ConnectionService connectionService;
     private final ConnectionAccessService connectionAccessService;
+    private final SqlCompletionMetadataCache completionCache;
+    private final ConcurrentHashMap<String, ExecutionOwner> executions = new ConcurrentHashMap<>();
+
+    private record ExecutionOwner(Long userId, WorkspaceTypeEnum workspaceType, Long orgId,
+                                  DbContext db, AtomicBoolean cancelRequested) {
+    }
 
     @Override
     public ExecuteSqlResponse executeSql(AgentExecuteSqlRequest request) {
@@ -55,12 +71,21 @@ public class SqlExecutionServiceImpl implements SqlExecutionService {
         CommandExecutor<SqlCommandRequest, SqlCommandResult> executor =
                 pluginManager.getSqlCommandExecutorByPluginId(active.pluginId());
         SqlCommandResult result;
+        SqlExecutionOptions options = new SqlExecutionOptions(request.getTimeoutMs(), request.getMaxRows(),
+                request.getExecutionId());
+        registerExecution(db, options.executionId());
         try (ActiveConnectionRegistry.BorrowedConnection borrowed = active.borrowConnection()) {
-            SqlCommandRequest pluginRequest = pluginRequest(borrowed.connection(), db, sql, !isReadOnly(validator, sql));
+            SqlCommandRequest pluginRequest = pluginRequest(borrowed.connection(), db, sql,
+                    !isReadOnly(validator, sql), options);
             result = executor.executeCommand(pluginRequest);
+        } finally {
+            unregisterExecution(options.executionId());
         }
 
         ExecuteSqlResponse response = SqlExecutionConverter.toResponse(result);
+        if (result != null && result.isSuccess() && isDdl(validator, sql)) {
+            completionCache.invalidate(db.connectionId());
+        }
         if (response != null) {
             response.setDatabaseName(db.catalog());
             response.setSchemaName(db.schema());
@@ -75,6 +100,12 @@ public class SqlExecutionServiceImpl implements SqlExecutionService {
 
     @Override
     public List<ExecuteSqlResponse> executeBatchSql(DbContext db, List<String> sqls, BatchMode mode) {
+        return executeBatchSql(db, sqls, mode, SqlExecutionOptions.DEFAULT);
+    }
+
+    @Override
+    public List<ExecuteSqlResponse> executeBatchSql(DbContext db, List<String> sqls, BatchMode mode,
+                                                    SqlExecutionOptions options) {
         connectionService.openConnection(db);
 
         ActiveConnectionRegistry.ActiveConnection active = ActiveConnectionRegistry.getOwnedConnection(db);
@@ -89,15 +120,33 @@ public class SqlExecutionServiceImpl implements SqlExecutionService {
                     .toList();
         }
 
+        if (mode == BatchMode.ATOMIC && sqls.stream().anyMatch(sql -> !isAtomicStatement(validator, sql))) {
+            return sqls.stream()
+                    .map(sql -> rejectedResponse(sql, db,
+                            "Atomic mode accepts only validated queries and transactional DML; use STEPWISE for DDL or unknown statements",
+                            BatchExecutionState.FAILED))
+                    .toList();
+        }
+
         CommandExecutor<SqlCommandRequest, SqlCommandResult> executor =
                 pluginManager.getSqlCommandExecutorByPluginId(active.pluginId());
 
         SqlBatchCommandResult batch;
+        registerExecution(db, options.executionId());
         try (ActiveConnectionRegistry.BorrowedConnection borrowed = active.borrowConnection()) {
             Connection connection = borrowed.connection();
             batch = mode == BatchMode.STEPWISE
-                    ? executeStepwise(connection, executor, db, sqls)
-                    : executeAtomic(connection, executor, validator, db, sqls);
+                    ? executeStepwise(connection, executor, db, sqls, options)
+                    : executeAtomic(connection, executor, validator, db, sqls, options);
+        } finally {
+            unregisterExecution(options.executionId());
+        }
+        for (int i = 0; i < batch.getResults().size(); i++) {
+            SqlCommandResult result = batch.getResults().get(i);
+            if (result.isSuccess() && isDdl(validator, sqls.get(i))) {
+                completionCache.invalidate(db.connectionId());
+                break;
+            }
         }
         return toResponses(batch, db);
     }
@@ -111,7 +160,7 @@ public class SqlExecutionServiceImpl implements SqlExecutionService {
     private SqlBatchCommandResult executeAtomic(Connection connection,
                                                 CommandExecutor<SqlCommandRequest, SqlCommandResult> executor,
                                                 SqlValidator validator,
-                                                DbContext db, List<String> sqls) {
+                                                DbContext db, List<String> sqls, SqlExecutionOptions options) {
         long started = System.currentTimeMillis();
         boolean originalAutoCommit = getAutoCommit(connection);
         List<SqlCommandResult> results = new ArrayList<>(sqls.size());
@@ -121,8 +170,13 @@ public class SqlExecutionServiceImpl implements SqlExecutionService {
         try {
             connection.setAutoCommit(false);
             for (int i = 0; i < sqls.size(); i++) {
+                if (isCancellationRequested(options.executionId())) {
+                    results.add(notExecutedStub(sqls.get(i), "Not executed because cancellation was requested"));
+                    failedIndex = i;
+                    break;
+                }
                 SqlCommandResult result = executor.executeCommand(
-                        pluginRequest(connection, db, sqls.get(i), false));
+                        pluginRequest(connection, db, sqls.get(i), false, options));
                 results.add(result);
                 if (!result.isSuccess()) {
                     failedIndex = i;
@@ -188,11 +242,23 @@ public class SqlExecutionServiceImpl implements SqlExecutionService {
      */
     private SqlBatchCommandResult executeStepwise(Connection connection,
                                                   CommandExecutor<SqlCommandRequest, SqlCommandResult> executor,
-                                                  DbContext db, List<String> sqls) {
+                                                  DbContext db, List<String> sqls, SqlExecutionOptions options) {
         long started = System.currentTimeMillis();
         List<SqlCommandResult> results = new ArrayList<>(sqls.size());
         for (String sql : sqls) {
-            results.add(executor.executeCommand(pluginRequest(connection, db, sql, true)));
+            if (isCancellationRequested(options.executionId())) {
+                break;
+            }
+            SqlCommandResult result = executor.executeCommand(pluginRequest(connection, db, sql, true, options));
+            results.add(result);
+            if (result.getStatementState() == StatementExecutionState.CANCELLED
+                    || result.getStatementState() == StatementExecutionState.TIMED_OUT
+                    || result.getStatementState() == StatementExecutionState.UNKNOWN) {
+                break;
+            }
+        }
+        for (int i = results.size(); i < sqls.size(); i++) {
+            results.add(notExecutedStub(sqls.get(i), "Not executed after cancellation, timeout or unknown outcome"));
         }
 
         int failedIndex = -1;
@@ -311,7 +377,8 @@ public class SqlExecutionServiceImpl implements SqlExecutionService {
         return responses;
     }
 
-    private SqlCommandRequest pluginRequest(Connection connection, DbContext db, String sql, boolean needTransaction) {
+    private SqlCommandRequest pluginRequest(Connection connection, DbContext db, String sql,
+                                            boolean needTransaction, SqlExecutionOptions options) {
         SqlCommandRequest request = new SqlCommandRequest();
         request.setConnection(connection);
         request.setOriginalSql(sql);
@@ -319,7 +386,50 @@ public class SqlExecutionServiceImpl implements SqlExecutionService {
         request.setDatabase(db.catalog());
         request.setSchema(db.schema());
         request.setNeedTransaction(needTransaction);
+        request.setTimeoutMs(options.timeoutMs());
+        request.setMaxRows(options.maxRows());
+        request.setExecutionId(options.executionId());
         return request;
+    }
+
+    private void registerExecution(DbContext db, String executionId) {
+        if (executionId == null) {
+            return;
+        }
+        UUID.fromString(executionId);
+        ExecutionOwner owner = new ExecutionOwner(RequestContext.getUserId(),
+                RequestContext.getWorkspaceTypeOrPersonal(), RequestContext.getOrgId(), db,
+                new AtomicBoolean(false));
+        if (owner.userId() == null || executions.putIfAbsent(executionId, owner) != null) {
+            throw new IllegalArgumentException("Invalid or already active SQL execution id");
+        }
+    }
+
+    private void unregisterExecution(String executionId) {
+        if (executionId != null) {
+            executions.remove(executionId);
+        }
+    }
+
+    private boolean isCancellationRequested(String executionId) {
+        ExecutionOwner owner = executionId == null ? null : executions.get(executionId);
+        return owner != null && owner.cancelRequested().get();
+    }
+
+    @Override
+    public CancelOutcome cancelExecution(DbContext db, String executionId) {
+        connectionAccessService.assertWorkbenchApiAllowed();
+        connectionAccessService.assertReadable(db.connectionId());
+        ExecutionOwner owner = executions.get(executionId);
+        if (owner == null || !Objects.equals(owner.userId(), RequestContext.getUserId())
+                || owner.workspaceType() != RequestContext.getWorkspaceTypeOrPersonal()
+                || !Objects.equals(owner.orgId(), RequestContext.getOrgId())
+                || !owner.db().equals(db)) {
+            return CancelOutcome.NO_ACTIVE_STATEMENT;
+        }
+        owner.cancelRequested().set(true);
+        CancelOutcome outcome = StatementCancellationRegistry.getInstance().cancel(executionId);
+        return outcome == CancelOutcome.NO_ACTIVE_STATEMENT ? CancelOutcome.CANCEL_REQUESTED : outcome;
     }
 
     /**
@@ -342,6 +452,21 @@ public class SqlExecutionServiceImpl implements SqlExecutionService {
         try {
             return validator.classifySql(sql).isDdl();
         } catch (RuntimeException e) {
+            return false;
+        }
+    }
+
+    private boolean isAtomicStatement(SqlValidator validator, String sql) {
+        try {
+            SqlValidationResult validation = validator.validate(sql);
+            if (validation == null || !validation.valid()) {
+                return false;
+            }
+            SqlType type = validation.sqlType();
+            return type == SqlType.SELECT || type == SqlType.INSERT || type == SqlType.UPDATE
+                    || type == SqlType.DELETE || type == SqlType.MERGE;
+        } catch (RuntimeException e) {
+            log.warn("Cannot establish atomic batch safety: {}", e.getMessage());
             return false;
         }
     }

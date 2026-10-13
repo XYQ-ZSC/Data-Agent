@@ -7,7 +7,21 @@ export interface ExecuteSqlParams {
   databaseName?: string | null;
   schemaName?: string | null;
   sql: string;
+  timeoutMs?: number;
+  maxRows?: number;
+  executionId?: string;
 }
+
+export type SqlBatchMode = 'ATOMIC' | 'STEPWISE';
+
+export interface ExecuteSqlScriptParams extends ExecuteSqlParams {
+  mode: SqlBatchMode;
+}
+
+export type SqlStatementState = 'NOT_EXECUTED' | 'EXECUTED' | 'COMMITTED' | 'ROLLED_BACK'
+  | 'FAILED' | 'TIMED_OUT' | 'CANCELLED' | 'UNKNOWN';
+export type SqlTransactionOutcome = 'NONE' | 'COMMITTED' | 'ROLLED_BACK' | 'UNKNOWN';
+export type SqlBatchState = 'SUCCESS' | 'FAILED' | 'ROLLED_BACK' | 'PARTIAL' | 'UNKNOWN';
 
 export interface SqlSyntaxError {
   line: number;
@@ -37,6 +51,37 @@ export interface SqlScriptAnalysis {
   errors: SqlSyntaxError[];
 }
 
+/** SQL completion, returned from backend /api/db/sql/complete */
+export type SqlCompletionKind = 'KEYWORD' | 'FUNCTION' | 'PROCEDURE' | 'SCHEMA' | 'TABLE' | 'VIEW' | 'COLUMN' | 'ALIAS' | 'SNIPPET' | 'ALL_COLUMNS' | 'JOIN' | 'VARIABLE' | 'PACKAGE' | 'SYNONYM';
+
+export interface SqlCompletionItem {
+  label: string;
+  kind: SqlCompletionKind;
+  insertText: string;
+  detail?: string | null;
+  replaceStart: number;
+  replaceEnd: number;
+  source?: string | null;
+  filterText: string;
+  rank: number;
+  documentation?: string | null;
+  snippet: boolean;
+}
+
+export interface SqlCompletionResponse {
+  items: SqlCompletionItem[];
+  incomplete: boolean;
+  environment?: { databaseVersion: string | null; settings: Record<string, string> } | null;
+}
+
+export interface SqlCompletionParams {
+  connectionId: number;
+  databaseName?: string | null;
+  schemaName?: string | null;
+  sql: string;
+  cursorOffset: number;
+}
+
 /**
  * SQL Execution Response
  * Returned from backend /api/db/sql/execute
@@ -60,6 +105,9 @@ export interface ExecuteSqlResponse {
   executionInfo?: ExecuteSqlExecutionInfo | null;
   messages?: ExecuteSqlMessage[] | null;
   results?: ExecuteSqlSubResult[] | null;
+  statementState?: SqlStatementState | null;
+  transactionOutcome?: SqlTransactionOutcome | null;
+  batchState?: SqlBatchState | null;
 }
 
 export type ExecuteSqlResponseType = 'QUERY' | 'UPDATE' | 'DDL' | 'ERROR';

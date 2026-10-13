@@ -544,6 +544,10 @@
     "folder_views": "Views",
     "folder_routines": "Routines",
     "folder_triggers": "Triggers",
+    "folder_sequences": "Sequences",
+    "folder_constraints": "Constraints",
+    "sequence_ddl_title": "Sequence DDL",
+    "constraint_ddl_title": "Constraint DDL",
     "folder_columns": "Columns",
     "folder_keys": "Keys",
     "folder_indexes": "Indexes",
@@ -579,6 +583,12 @@
     "delete_trigger": "Delete trigger",
     "delete_trigger_confirm": "Are you sure you want to delete trigger \"{{name}}\"? This action cannot be undone.",
     "delete_trigger_failed": "Failed to delete trigger",
+    "delete_sequence": "Delete sequence",
+    "delete_sequence_confirm": "Are you sure you want to delete sequence \"{{name}}\"? This action cannot be undone.",
+    "delete_sequence_failed": "Failed to delete sequence",
+    "delete_constraint": "Delete constraint",
+    "delete_constraint_confirm": "Are you sure you want to delete constraint \"{{name}}\"? This action cannot be undone.",
+    "delete_constraint_failed": "Failed to delete constraint",
     "delete_all_in_folder": "Delete all",
     "delete_all_in_folder_confirm": "Are you sure you want to delete all {{count}} objects in \"{{name}}\" folder? This action cannot be undone.",
     "delete_folder_success": "Successfully deleted all objects in folder",
@@ -939,5 +949,30 @@
     "needs_review": "Needs Review",
     "manual": "Manual",
     "agent": "Agent"
+  },
+  "sql_completion": {
+    "types": {
+      "keyword": "Keyword",
+      "function": "Function",
+      "procedure": "Procedure",
+      "schema": "Schema",
+      "table": "Table",
+      "view": "View",
+      "column": "Column",
+      "alias": "Alias",
+      "snippet": "SQL template",
+      "all_columns": "All columns",
+      "join": "JOIN condition",
+      "variable": "Variable",
+      "package": "Package",
+      "synonym": "Synonym"
+    },
+    "templates": {
+      "sel": "Select data from a table",
+      "selc": "Select data from a table with a condition",
+      "ins": "Insert data into a table",
+      "upd": "Update data in a table",
+      "del": "Delete data from a table"
+    }
   }
 }

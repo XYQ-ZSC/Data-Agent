@@ -7,7 +7,9 @@ import org.junit.jupiter.api.Test;
 
 import java.sql.Connection;
 import java.sql.PreparedStatement;
+import java.sql.ParameterMetaData;
 import java.sql.ResultSet;
+import java.sql.Types;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -27,6 +29,40 @@ import static org.mockito.Mockito.when;
 class DmRowWriteSupportTest {
 
     private final DmRowWriteSupport support = new DmRowWriteSupport();
+
+    @Test
+    void insertRow_decodesBinaryPreviewForBinaryColumn() throws Exception {
+        Connection connection = mock(Connection.class);
+        PreparedStatement statement = mock(PreparedStatement.class);
+        ParameterMetaData metadata = mock(ParameterMetaData.class);
+        when(connection.prepareStatement(anyString())).thenReturn(statement);
+        when(statement.getParameterMetaData()).thenReturn(metadata);
+        when(metadata.getParameterType(1)).thenReturn(Types.BLOB);
+        when(statement.executeUpdate()).thenReturn(1);
+
+        SqlCommandResult result = support.insertRow(connection, null, "HR", "files",
+                List.of(new TableRowValue("payload", "data:application/octet-stream;base64,AAECAw==")));
+
+        verify(statement).setBytes(1, new byte[]{0, 1, 2, 3});
+        assertTrue(result.isSuccess());
+    }
+
+    @Test
+    void insertRow_keepsHexLookingTextForCharacterColumn() throws Exception {
+        Connection connection = mock(Connection.class);
+        PreparedStatement statement = mock(PreparedStatement.class);
+        ParameterMetaData metadata = mock(ParameterMetaData.class);
+        when(connection.prepareStatement(anyString())).thenReturn(statement);
+        when(statement.getParameterMetaData()).thenReturn(metadata);
+        when(metadata.getParameterType(1)).thenReturn(Types.VARCHAR);
+        when(statement.executeUpdate()).thenReturn(1);
+
+        SqlCommandResult result = support.insertRow(connection, null, "HR", "notes",
+                List.of(new TableRowValue("text", "0xABCD")));
+
+        verify(statement).setObject(1, "0xABCD");
+        assertTrue(result.isSuccess());
+    }
 
     // ---------- insert ----------
 

@@ -22,4 +22,10 @@ public class AgentExecuteSqlRequest extends BaseRequest {
 
     @NotBlank(message = "SQL cannot be null or empty")
     private String sql;
+
+    private Integer timeoutMs;
+
+    private Integer maxRows;
+
+    private String executionId;
 }

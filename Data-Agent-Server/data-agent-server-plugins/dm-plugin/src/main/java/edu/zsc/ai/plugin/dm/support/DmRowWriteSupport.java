@@ -10,11 +10,13 @@ import org.apache.commons.lang3.StringUtils;
 
 import java.sql.Connection;
 import java.sql.PreparedStatement;
+import java.sql.ParameterMetaData;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Types;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Base64;
 
 /**
  * Row-level INSERT/UPDATE/DELETE support for DM (DaMeng).
@@ -235,13 +237,48 @@ public final class DmRowWriteSupport {
     }
 
     private void bindPreparedParameters(PreparedStatement statement, List<Object> params) throws SQLException {
+        ParameterMetaData parameterMetaData = null;
         for (int i = 0; i < params.size(); i++) {
             Object value = params.get(i);
             if (value == null) {
                 statement.setNull(i + 1, Types.NULL);
+            } else if (value instanceof String text && isEncodedBinary(text)) {
+                if (parameterMetaData == null) {
+                    parameterMetaData = statement.getParameterMetaData();
+                    if (parameterMetaData == null) {
+                        throw new SQLException("Cannot verify target type for encoded binary value");
+                    }
+                }
+                int jdbcType = parameterMetaData.getParameterType(i + 1);
+                boolean binaryType = jdbcType == Types.BINARY || jdbcType == Types.VARBINARY
+                        || jdbcType == Types.LONGVARBINARY || jdbcType == Types.BLOB;
+                if (!binaryType && (jdbcType == Types.OTHER || jdbcType == Types.NULL)) {
+                    String typeName = parameterMetaData.getParameterTypeName(i + 1);
+                    binaryType = typeName != null && (typeName.equalsIgnoreCase("BLOB")
+                            || typeName.equalsIgnoreCase("BINARY") || typeName.equalsIgnoreCase("VARBINARY"));
+                }
+                if (binaryType) {
+                    statement.setBytes(i + 1, decodeBinary(text));
+                } else if (jdbcType == Types.OTHER || jdbcType == Types.NULL) {
+                    throw new SQLException("Cannot verify target type for encoded binary value");
+                } else {
+                    statement.setObject(i + 1, text);
+                }
             } else {
                 statement.setObject(i + 1, value);
             }
+        }
+    }
+
+    private boolean isEncodedBinary(String value) {
+        return value.startsWith("data:application/octet-stream;base64,");
+    }
+
+    private byte[] decodeBinary(String value) throws SQLException {
+        try {
+            return Base64.getDecoder().decode(value.substring("data:application/octet-stream;base64,".length()));
+        } catch (IllegalArgumentException e) {
+            throw new SQLException("Invalid Base64 binary value", e);
         }
     }
 

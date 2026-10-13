@@ -2,6 +2,9 @@ package edu.zsc.ai.plugin.mysql;
 
 import edu.zsc.ai.plugin.connection.ConnectionConfig;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.Assumptions;
+import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
 
 import java.sql.Connection;
 import java.sql.ResultSet;
@@ -12,13 +15,27 @@ import static org.junit.jupiter.api.Assertions.*;
 /**
  * Test MySQL 8 plugin connection functionality.
  */
+@EnabledIfSystemProperty(named = "mysql.live", matches = "true")
 public class Mysql8PluginConnectionTest {
 
-    private static final String DRIVER_JAR_PATH = "/Users/dawn/Desktop/mysql-connector-j-8.2.0.jar";
-    private static final String HOST = "localhost";
-    private static final int PORT = 3306;
-    private static final String USERNAME = "root";
-    private static final String PASSWORD = "root";
+    private static final String DRIVER_JAR_PATH = setting("driver.jar");
+    private static final String HOST = setting("host") == null ? "localhost" : setting("host");
+    private static final int PORT = setting("port") == null ? 3306 : Integer.parseInt(setting("port"));
+    private static final String USERNAME = setting("user");
+    private static final String PASSWORD = setting("password");
+
+    @BeforeAll
+    static void requireLiveConfiguration() {
+        Assumptions.assumeTrue(DRIVER_JAR_PATH != null && USERNAME != null && PASSWORD != null,
+                "Set mysql.driver.jar, mysql.user and mysql.password for live MySQL tests");
+    }
+
+    private static String setting(String name) {
+        String property = System.getProperty("mysql." + name);
+        if (property != null && !property.isBlank()) return property;
+        String environment = System.getenv("MYSQL_" + name.toUpperCase().replace('.', '_'));
+        return environment == null || environment.isBlank() ? null : environment;
+    }
 
     @Test
     public void testConnect() throws Exception {
@@ -150,4 +167,3 @@ public class Mysql8PluginConnectionTest {
         System.out.println("✅ MySQL 8 testConnection() failure test successful!");
     }
 }
-
