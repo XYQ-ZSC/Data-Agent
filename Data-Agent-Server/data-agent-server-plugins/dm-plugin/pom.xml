@@ -55,8 +55,7 @@
                     <visitor>true</visitor>
                     <listener>true</listener>
                     <sourceDirectory>${basedir}/src/main/antlr4</sourceDirectory>
-                    <!-- Keep generated parsers under src/main/java so IDE rebuilds still see them after mvn clean. -->
-                    <outputDirectory>${basedir}/src/main/java</outputDirectory>
+                    <outputDirectory>${project.build.directory}/generated-sources/antlr4</outputDirectory>
                 </configuration>
             </plugin>
         </plugins>
