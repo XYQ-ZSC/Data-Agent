@@ -5,94 +5,70 @@ import com.fasterxml.jackson.core.JsonFactory;
 import com.fasterxml.jackson.core.JsonGenerator;
 import edu.zsc.ai.domain.model.context.DbContext;
 import edu.zsc.ai.domain.service.db.ConnectionService;
-import edu.zsc.ai.domain.service.db.impl.ActiveConnectionRegistry;
-import edu.zsc.ai.domain.service.db.transfer.TransferConstants;
-import edu.zsc.ai.plugin.capability.TableManager;
-import edu.zsc.ai.plugin.manager.DefaultPluginManager;
 import edu.zsc.ai.plugin.model.command.sql.SqlCommandResult;
-import lombok.RequiredArgsConstructor;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
 import java.io.OutputStream;
-import java.sql.Connection;
 import java.util.List;
 
 /**
  * Exports all rows of a table as a pretty-printed JSON array of objects, page by page.
  */
 @Component
-@RequiredArgsConstructor
-public class JsonTableDataExporter {
+public class JsonTableDataExporter extends AbstractTableDataExporter<JsonTableDataExporter.JsonSession> {
 
-    private static final Logger log = LoggerFactory.getLogger(JsonTableDataExporter.class);
+    public JsonTableDataExporter(ConnectionService connectionService) {
+        super(connectionService);
+    }
 
-    private final ConnectionService connectionService;
+    @Override
+    public String fileType() {
+        return "JSON";
+    }
 
-    public void export(DbContext db, String tableName, List<String> columns,
-                       OutputStream outputStream, Runnable onBeforeFirstWrite) {
-        connectionService.openConnection(db);
+    @Override
+    public String extension(String fileType) {
+        return ".json";
+    }
 
-        ActiveConnectionRegistry.ActiveConnection active = ActiveConnectionRegistry.getOwnedConnection(db);
-        TableManager provider = DefaultPluginManager.getInstance().getTableManagerByPluginId(active.pluginId());
-        JsonFactory jsonFactory = new JsonFactory();
+    @Override
+    public String contentType(String fileType) {
+        return "application/json; charset=UTF-8";
+    }
 
-        try (ActiveConnectionRegistry.BorrowedConnection borrowed = active.borrowConnection();
-             JsonGenerator generator = jsonFactory.createGenerator(outputStream, JsonEncoding.UTF8)) {
-            // Pretty-printed JSON: each field on its own indented line.
-            generator.useDefaultPrettyPrinter();
-            Connection connection = borrowed.connection();
-            int offset = 0;
+    @Override
+    protected JsonSession onStart(OutputStream outputStream, DbContext db, String tableName, String fileType,
+                                  List<String> headers, List<Integer> columnIndexes,
+                                  SqlCommandResult firstPage, String identifierQuote) throws IOException {
+        JsonGenerator generator = new JsonFactory().createGenerator(outputStream, JsonEncoding.UTF8);
+        // Pretty-printed JSON: each field on its own indented line.
+        generator.useDefaultPrettyPrinter();
+        generator.writeStartArray();
+        return new JsonSession(generator, headers, columnIndexes);
+    }
 
-            // Query the first page before writing anything, so connection/query errors
-            // surface before the HTTP response is committed.
-            SqlCommandResult first = provider.getTableData(connection, db.catalog(), db.schema(),
-                    tableName, offset, TransferConstants.EXPORT_PAGE_SIZE);
-
-            List<String> headers = first.getHeaders() == null ? List.of() : first.getHeaders();
-            List<Integer> columnIndexes = ExportColumnSelector.resolve(headers, columns);
-
-            // First page query succeeded: it is now safe to commit file-download headers.
-            onBeforeFirstWrite.run();
-
-            generator.writeStartArray();
-
-            List<List<Object>> firstRows = first.getRows();
-            if (firstRows != null && !firstRows.isEmpty()) {
-                for (List<Object> row : firstRows) {
-                    writeJsonObject(generator, headers, row, columnIndexes);
-                }
-                log.info("JSON export started: connectionId={}, tableName={}, firstPageRows={}",
-                        db.connectionId(), tableName, firstRows.size());
-
-                offset += TransferConstants.EXPORT_PAGE_SIZE;
-                while (firstRows.size() == TransferConstants.EXPORT_PAGE_SIZE) {
-                    SqlCommandResult page = provider.getTableData(connection, db.catalog(), db.schema(),
-                            tableName, offset, TransferConstants.EXPORT_PAGE_SIZE);
-                    List<List<Object>> rows = page.getRows();
-                    if (rows == null || rows.isEmpty()) {
-                        break;
-                    }
-                    for (List<Object> row : rows) {
-                        writeJsonObject(generator, headers, row, columnIndexes);
-                    }
-                    generator.flush();
-                    if (rows.size() < TransferConstants.EXPORT_PAGE_SIZE) {
-                        break;
-                    }
-                    offset += TransferConstants.EXPORT_PAGE_SIZE;
-                }
-            }
-
-            generator.writeEndArray();
-            generator.flush();
-            log.info("JSON export completed: connectionId={}, tableName={}, lastOffset={}",
-                    db.connectionId(), tableName, offset);
-        } catch (IOException ex) {
-            throw new RuntimeException("Export JSON failed: " + ex.getMessage(), ex);
+    @Override
+    protected void writeRows(JsonSession session, List<List<Object>> rows) throws IOException {
+        for (List<Object> row : rows) {
+            writeJsonObject(session.generator(), session.headers(), row, session.columnIndexes());
         }
+    }
+
+    @Override
+    protected void flushPage(JsonSession session) throws IOException {
+        session.generator().flush();
+    }
+
+    @Override
+    protected void onFinish(JsonSession session) throws IOException {
+        session.generator().writeEndArray();
+        session.generator().flush();
+    }
+
+    @Override
+    protected void cleanup(JsonSession session) {
+        closeQuietly(session.generator());
     }
 
     private void writeJsonObject(JsonGenerator generator, List<String> headers, List<Object> row,
@@ -118,5 +94,11 @@ public class JsonTableDataExporter {
         } else {
             generator.writeString(value.toString());
         }
+    }
+
+    /**
+     * Session that carries the generator and resolved columns across template-method calls.
+     */
+    record JsonSession(JsonGenerator generator, List<String> headers, List<Integer> columnIndexes) {
     }
 }

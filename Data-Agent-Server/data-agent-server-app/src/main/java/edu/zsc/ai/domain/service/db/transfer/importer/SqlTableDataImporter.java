@@ -1,12 +1,12 @@
 package edu.zsc.ai.domain.service.db.transfer.importer;
 
-import edu.zsc.ai.domain.exception.BusinessException;
 import edu.zsc.ai.domain.model.context.DbContext;
 import edu.zsc.ai.domain.model.dto.response.db.ImportTableDataResponse;
 import edu.zsc.ai.domain.service.db.ConnectionService;
 import edu.zsc.ai.domain.service.db.impl.ActiveConnectionRegistry;
 import edu.zsc.ai.domain.service.db.transfer.ImportBatchSupport;
 import edu.zsc.ai.domain.service.db.transfer.ImportFailureException;
+import edu.zsc.ai.domain.service.db.transfer.TableDataImporter;
 import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -20,6 +20,7 @@ import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 
 /**
  * Imports rows from a SQL file. The file may contain INSERT statements and SET
@@ -28,15 +29,21 @@ import java.util.List;
  */
 @Component
 @RequiredArgsConstructor
-public class SqlTableDataImporter {
+public class SqlTableDataImporter implements TableDataImporter {
 
     private static final Logger log = LoggerFactory.getLogger(SqlTableDataImporter.class);
 
     private final ConnectionService connectionService;
     private final ImportBatchSupport batchSupport;
 
+    @Override
+    public String fileType() {
+        return "SQL";
+    }
+
+    @Override
     public ImportTableDataResponse importData(DbContext db, String tableName,
-                                              InputStream inputStream) {
+                                              InputStream inputStream, String encoding) {
         connectionService.openConnection(db);
 
         ActiveConnectionRegistry.ActiveConnection active = ActiveConnectionRegistry.getOwnedConnection(db);
@@ -50,73 +57,52 @@ public class SqlTableDataImporter {
             }
             List<String> statements = splitSqlStatements(script);
             if (statements.isEmpty()) {
-                throw new BusinessException("SQL file contains no INSERT statements");
+                return ImportBatchSupport.failureResponse(1, "SQL file contains no INSERT statements", 0);
             }
 
-            boolean originalAutoCommit = connection.getAutoCommit();
-            int totalStatements = 0;
-            int totalRows = 0;
-            int insertedRows = 0;
+            int[] counters = new int[2]; // [0] = statements executed, [1] = rows affected by INSERTs
             try {
-                connection.setAutoCommit(false);
-                try (Statement statement = connection.createStatement()) {
-                    for (String sql : statements) {
-                        totalStatements++;
-                        String lower = sql.toLowerCase();
-                        // Whitelist: INSERT loads data; SET only changes session settings
-                        // (e.g. "SET NAMES utf8mb4;" written by this app's own SQL export).
-                        // UPDATE/DELETE/DROP and other statements stay rejected.
-                        if (!lower.startsWith("insert") && !lower.startsWith("set")) {
-                            throw new ImportFailureException(totalStatements,
-                                    "Only INSERT and SET statements are supported, but statement "
-                                            + totalStatements + " starts with '"
-                                            + firstSqlWord(sql) + "'");
-                        }
-                        try {
-                            int affected = statement.executeUpdate(sql);
-                            if (lower.startsWith("insert")) {
-                                totalRows++;
-                                insertedRows += affected;
+                batchSupport.runInTransaction(connection, () -> {
+                    try (Statement statement = connection.createStatement()) {
+                        for (String sql : statements) {
+                            counters[0]++;
+                            String lower = sql.toLowerCase(Locale.ROOT);
+                            // Whitelist: INSERT loads data; SET only changes session settings
+                            // (e.g. "SET NAMES utf8mb4;" written by this app's own SQL export).
+                            // UPDATE/DELETE/DROP and other statements stay rejected.
+                            if (!lower.startsWith("insert") && !lower.startsWith("set")) {
+                                throw new ImportFailureException(counters[0],
+                                        "Only INSERT and SET statements are supported, but statement "
+                                                + counters[0] + " starts with '"
+                                                + firstSqlWord(sql) + "'");
                             }
-                        } catch (SQLException ex) {
-                            throw new ImportFailureException(totalStatements,
-                                    "Database rejected statement " + totalStatements
-                                            + ": " + ex.getMessage());
+                            try {
+                                int affected = statement.executeUpdate(sql);
+                                if (lower.startsWith("insert")) {
+                                    counters[1] += affected;
+                                }
+                            } catch (SQLException ex) {
+                                throw new ImportFailureException(counters[0],
+                                        "Database rejected statement " + counters[0]
+                                                + ": " + ex.getMessage());
+                            }
                         }
                     }
-                }
-                connection.commit();
+                    return counters[0];
+                });
             } catch (ImportFailureException failure) {
-                batchSupport.safeRollback(connection);
                 log.warn("SQL import failed at statement {}: connectionId={}, tableName={}",
                         failure.fileRow(), db.connectionId(), tableName);
-                return ImportTableDataResponse.builder()
-                        .success(false)
-                        .totalRows(totalStatements)
-                        .insertedRows(0)
-                        .failedAtRow(failure.fileRow())
-                        .errorMessage(failure.getMessage())
-                        .build();
-            } catch (Exception unexpected) {
-                // Any error outside the normal ImportFailureException path must roll
-                // back too; otherwise restoring autoCommit in finally could commit
-                // partial rows on some JDBC drivers.
-                batchSupport.safeRollback(connection);
-                if (unexpected instanceof RuntimeException runtimeException) {
-                    throw runtimeException;
-                }
-                throw new RuntimeException("Import failed; transaction rolled back: "
-                        + unexpected.getMessage(), unexpected);
-            } finally {
-                batchSupport.restoreAutoCommit(connection, originalAutoCommit);
+                return ImportBatchSupport.failureResponse(failure.fileRow(), failure.getMessage(),
+                        counters[0]);
             }
 
             log.info("SQL import completed: connectionId={}, tableName={}, statements={}, affectedRows={}",
-                    db.connectionId(), tableName, totalStatements, insertedRows);
+                    db.connectionId(), tableName, counters[0], counters[1]);
             return ImportTableDataResponse.builder()
                     .success(true)
-                    .totalRows(totalStatements)
-                    .insertedRows(insertedRows)
+                    .totalRows(counters[0])
+                    .insertedRows(counters[1])
                     .build();
         } catch (SQLException | IOException ex) {
             throw new RuntimeException("Import SQL failed: " + ex.getMessage(), ex);

@@ -11,6 +11,7 @@ import java.sql.Timestamp;
 import java.sql.Types;
 import java.time.LocalDate;
 import java.time.LocalTime;
+import java.util.Locale;
 
 /**
  * Converts one imported text value to the JDBC type of its target column. Used by
@@ -85,7 +86,7 @@ public class ColumnValueConverter {
     }
 
     private boolean parseCsvBoolean(String raw) {
-        String value = raw.trim().toLowerCase();
+        String value = raw.trim().toLowerCase(Locale.ROOT);
         return switch (value) {
             case "1", "true", "yes", "y", "t" -> true;
             case "0", "false", "no", "n", "f" -> false;

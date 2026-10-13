@@ -3,12 +3,9 @@ package edu.zsc.ai.domain.service.db.transfer.export;
 import edu.zsc.ai.domain.exception.BusinessException;
 import edu.zsc.ai.domain.model.context.DbContext;
 import edu.zsc.ai.domain.service.db.ConnectionService;
-import edu.zsc.ai.domain.service.db.impl.ActiveConnectionRegistry;
 import edu.zsc.ai.domain.service.db.transfer.TransferConstants;
 import edu.zsc.ai.plugin.capability.TableManager;
-import edu.zsc.ai.plugin.manager.DefaultPluginManager;
 import edu.zsc.ai.plugin.model.command.sql.SqlCommandResult;
-import lombok.RequiredArgsConstructor;
 import org.apache.poi.hssf.usermodel.HSSFWorkbook;
 import org.apache.poi.ss.usermodel.Cell;
 import org.apache.poi.ss.usermodel.CellStyle;
@@ -17,8 +14,6 @@ import org.apache.poi.ss.usermodel.Row;
 import org.apache.poi.ss.usermodel.Sheet;
 import org.apache.poi.ss.usermodel.Workbook;
 import org.apache.poi.xssf.streaming.SXSSFWorkbook;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
@@ -34,122 +29,111 @@ import java.util.List;
  * API (500 rows in memory); XLS uses HSSF and is limited to 65535 data rows.
  */
 @Component
-@RequiredArgsConstructor
-public class ExcelTableDataExporter {
+public class ExcelTableDataExporter extends AbstractTableDataExporter<ExcelTableDataExporter.ExcelSession> {
 
-    private static final Logger log = LoggerFactory.getLogger(ExcelTableDataExporter.class);
+    public ExcelTableDataExporter(ConnectionService connectionService) {
+        super(connectionService);
+    }
 
-    private final ConnectionService connectionService;
+    @Override
+    public String fileType() {
+        return "XLSX";
+    }
 
-    public void export(DbContext db, String tableName, String format, List<String> columns,
-                       OutputStream outputStream, Runnable onBeforeFirstWrite) {
-        boolean xlsx = !"XLS".equalsIgnoreCase(format);
+    @Override
+    public List<String> aliases() {
+        return List.of("XLS");
+    }
 
-        connectionService.openConnection(db);
+    @Override
+    public String extension(String fileType) {
+        return "XLS".equalsIgnoreCase(fileType) ? ".xls" : ".xlsx";
+    }
 
-        ActiveConnectionRegistry.ActiveConnection active = ActiveConnectionRegistry.getOwnedConnection(db);
-        TableManager provider = DefaultPluginManager.getInstance().getTableManagerByPluginId(active.pluginId());
+    @Override
+    public String contentType(String fileType) {
+        return "XLS".equalsIgnoreCase(fileType)
+                ? "application/vnd.ms-excel"
+                : "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+    }
 
-        SXSSFWorkbook sxssfWorkbook = null;
-        try (ActiveConnectionRegistry.BorrowedConnection borrowed = active.borrowConnection()) {
-            Connection connection = borrowed.connection();
-
-            // XLS has a hard 65535-data-row limit; verify the count before writing anything.
-            if (!xlsx) {
-                long totalRows = provider.getTableDataCount(connection, db.catalog(), db.schema(), tableName);
-                if (totalRows > TransferConstants.XLS_MAX_DATA_ROWS) {
-                    throw new BusinessException("XLS format supports at most " + TransferConstants.XLS_MAX_DATA_ROWS
-                            + " data rows (found " + totalRows + "); please choose XLSX instead");
-                }
-            }
-
-            // Query the first page so connection/query errors surface before headers are committed.
-            SqlCommandResult first = provider.getTableData(connection, db.catalog(), db.schema(),
-                    tableName, 0, TransferConstants.EXPORT_PAGE_SIZE);
-
-            List<String> headers = first.getHeaders() == null ? List.of() : first.getHeaders();
-            List<Integer> columnIndexes = ExportColumnSelector.resolve(headers, columns);
-
-            // First page query succeeded: it is now safe to commit file-download headers.
-            onBeforeFirstWrite.run();
-
-            Workbook workbook;
-            if (xlsx) {
-                // Keep only 500 rows in memory; older rows are flushed to temporary files.
-                sxssfWorkbook = new SXSSFWorkbook(500);
-                workbook = sxssfWorkbook;
-            } else {
-                workbook = new HSSFWorkbook();
-            }
-
-            CellStyle headerStyle = workbook.createCellStyle();
-            Font headerFont = workbook.createFont();
-            headerFont.setBold(true);
-            headerStyle.setFont(headerFont);
-
-            CellStyle dateStyle = workbook.createCellStyle();
-            dateStyle.setDataFormat(workbook.getCreationHelper().createDataFormat()
-                    .getFormat("yyyy-mm-dd hh:mm:ss"));
-
-            Sheet sheet = workbook.createSheet(buildSafeSheetName(tableName));
-            Row headerRow = sheet.createRow(0);
-            for (int i = 0; i < columnIndexes.size(); i++) {
-                Cell cell = headerRow.createCell(i);
-                cell.setCellValue(headers.get(columnIndexes.get(i)));
-                cell.setCellStyle(headerStyle);
-            }
-
-            int rowIndex = 1;
-            List<List<Object>> firstRows = first.getRows();
-            if (firstRows != null && !firstRows.isEmpty()) {
-                rowIndex = writeExcelRows(sheet, firstRows, rowIndex, columnIndexes, dateStyle);
-                log.info("Excel export started: connectionId={}, tableName={}, format={}, firstPageRows={}",
-                        db.connectionId(), tableName, format, firstRows.size());
-
-                int offset = TransferConstants.EXPORT_PAGE_SIZE;
-                while (firstRows.size() == TransferConstants.EXPORT_PAGE_SIZE) {
-                    SqlCommandResult page = provider.getTableData(connection, db.catalog(), db.schema(),
-                            tableName, offset, TransferConstants.EXPORT_PAGE_SIZE);
-                    List<List<Object>> rows = page.getRows();
-                    if (rows == null || rows.isEmpty()) {
-                        break;
-                    }
-                    rowIndex = writeExcelRows(sheet, rows, rowIndex, columnIndexes, dateStyle);
-                    if (rows.size() < TransferConstants.EXPORT_PAGE_SIZE) {
-                        break;
-                    }
-                    offset += TransferConstants.EXPORT_PAGE_SIZE;
-                }
-            }
-
-            workbook.write(outputStream);
-            workbook.close();
-            outputStream.flush();
-            log.info("Excel export completed: connectionId={}, tableName={}, format={}, dataRows={}",
-                    db.connectionId(), tableName, format, rowIndex - 1);
-        } catch (IOException ex) {
-            throw new RuntimeException("Export Excel failed: " + ex.getMessage(), ex);
-        } finally {
-            // Remove SXSSF temporary files.
-            if (sxssfWorkbook != null) {
-                sxssfWorkbook.dispose();
+    @Override
+    protected void preCheck(TableManager provider, Connection connection, DbContext db,
+                            String tableName, String fileType) {
+        if ("XLS".equalsIgnoreCase(fileType)) {
+            long totalRows = provider.getTableDataCount(connection, db.catalog(), db.schema(), tableName);
+            if (totalRows > TransferConstants.XLS_MAX_DATA_ROWS) {
+                throw new BusinessException("XLS format supports at most " + TransferConstants.XLS_MAX_DATA_ROWS
+                        + " data rows (found " + totalRows + "); please choose XLSX instead");
             }
         }
     }
 
-    private int writeExcelRows(Sheet sheet, List<List<Object>> rows, int startRowIndex,
-                               List<Integer> columnIndexes, CellStyle dateStyle) {
-        int rowIndex = startRowIndex;
+    @Override
+    protected ExcelSession onStart(OutputStream outputStream, DbContext db, String tableName, String fileType,
+                                   List<String> headers, List<Integer> columnIndexes,
+                                   SqlCommandResult firstPage, String identifierQuote) throws IOException {
+        boolean xlsx = !"XLS".equalsIgnoreCase(fileType);
+
+        SXSSFWorkbook sxssfWorkbook = null;
+        Workbook workbook;
+        if (xlsx) {
+            // Keep only 500 rows in memory; older rows are flushed to temporary files.
+            sxssfWorkbook = new SXSSFWorkbook(500);
+            workbook = sxssfWorkbook;
+        } else {
+            workbook = new HSSFWorkbook();
+        }
+
+        CellStyle headerStyle = workbook.createCellStyle();
+        Font headerFont = workbook.createFont();
+        headerFont.setBold(true);
+        headerStyle.setFont(headerFont);
+
+        CellStyle dateStyle = workbook.createCellStyle();
+        dateStyle.setDataFormat(workbook.getCreationHelper().createDataFormat()
+                .getFormat("yyyy-mm-dd hh:mm:ss"));
+
+        Sheet sheet = workbook.createSheet(buildSafeSheetName(tableName));
+        Row headerRow = sheet.createRow(0);
+        for (int i = 0; i < columnIndexes.size(); i++) {
+            Cell cell = headerRow.createCell(i);
+            cell.setCellValue(headers.get(columnIndexes.get(i)));
+            cell.setCellStyle(headerStyle);
+        }
+
+        return new ExcelSession(workbook, sxssfWorkbook, sheet, columnIndexes, dateStyle, outputStream, 1);
+    }
+
+    @Override
+    protected void writeRows(ExcelSession session, List<List<Object>> rows) throws IOException {
         for (List<Object> rowData : rows) {
-            Row row = sheet.createRow(rowIndex);
+            Row row = session.sheet().createRow(session.rowIndex());
+            List<Integer> columnIndexes = session.columnIndexes();
             for (int i = 0; i < columnIndexes.size(); i++) {
                 int columnIndex = columnIndexes.get(i);
                 Cell cell = row.createCell(i);
-                setExcelCellValue(cell, columnIndex < rowData.size() ? rowData.get(columnIndex) : null, dateStyle);
+                setExcelCellValue(cell, columnIndex < rowData.size() ? rowData.get(columnIndex) : null,
+                        session.dateStyle());
             }
-            rowIndex++;
+            session.incrementRowIndex();
         }
-        return rowIndex;
+    }
+
+    @Override
+    protected void onFinish(ExcelSession session) throws IOException {
+        Workbook workbook = session.workbook();
+        workbook.write(session.outputStream());
+        workbook.close();
+        session.outputStream().flush();
+    }
+
+    @Override
+    protected void cleanup(ExcelSession session) {
+        SXSSFWorkbook sxssf = session.sxssfWorkbook();
+        if (sxssf != null) {
+            sxssf.dispose();
+        }
     }
 
     private void setExcelCellValue(Cell cell, Object value, CellStyle dateStyle) {
@@ -186,5 +170,39 @@ public class ExcelTableDataExporter {
         // Sheet names must be <= 31 chars and cannot contain : \ / ? * [ ].
         String safe = tableName.replaceAll("[:\\\\/?*\\[\\]]", "_");
         return safe.length() > 31 ? safe.substring(0, 31) : safe;
+    }
+
+    /**
+     * Session that carries the workbook, sheet, and current row index across template-method calls.
+     */
+    static class ExcelSession {
+        private final Workbook workbook;
+        private final SXSSFWorkbook sxssfWorkbook;
+        private final Sheet sheet;
+        private final List<Integer> columnIndexes;
+        private final CellStyle dateStyle;
+        private final OutputStream outputStream;
+        private int rowIndex;
+
+        ExcelSession(Workbook workbook, SXSSFWorkbook sxssfWorkbook, Sheet sheet,
+                     List<Integer> columnIndexes, CellStyle dateStyle, OutputStream outputStream,
+                     int initialRowIndex) {
+            this.workbook = workbook;
+            this.sxssfWorkbook = sxssfWorkbook;
+            this.sheet = sheet;
+            this.columnIndexes = columnIndexes;
+            this.dateStyle = dateStyle;
+            this.outputStream = outputStream;
+            this.rowIndex = initialRowIndex;
+        }
+
+        Workbook workbook() { return workbook; }
+        SXSSFWorkbook sxssfWorkbook() { return sxssfWorkbook; }
+        Sheet sheet() { return sheet; }
+        List<Integer> columnIndexes() { return columnIndexes; }
+        CellStyle dateStyle() { return dateStyle; }
+        OutputStream outputStream() { return outputStream; }
+        int rowIndex() { return rowIndex; }
+        void incrementRowIndex() { rowIndex++; }
     }
 }

@@ -1,6 +1,5 @@
 package edu.zsc.ai.domain.service.db.transfer;
 
-import edu.zsc.ai.domain.exception.BusinessException;
 import edu.zsc.ai.domain.model.context.DbContext;
 import edu.zsc.ai.plugin.capability.ColumnManager;
 import edu.zsc.ai.plugin.model.metadata.ColumnMetadata;
@@ -8,9 +7,13 @@ import org.springframework.stereotype.Component;
 
 import java.sql.Connection;
 import java.sql.SQLException;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.Locale;
 
 /**
  * Prepares an import: resolves the target table columns, the database identifier
@@ -30,11 +33,11 @@ public class ImportPrepareSupport {
         List<ColumnMetadata> tableColumns = columnManager.getColumns(
                 connection, db.catalog(), db.schema(), tableName);
         if (tableColumns.isEmpty()) {
-            throw new BusinessException("Cannot resolve columns of table: " + tableName);
+            throw new ImportFailureException(1, "Cannot resolve columns of table: " + tableName);
         }
         Map<String, ColumnMetadata> columnsByName = new HashMap<>();
         for (ColumnMetadata column : tableColumns) {
-            columnsByName.put(column.name().toLowerCase(), column);
+            columnsByName.put(column.name().toLowerCase(Locale.ROOT), column);
         }
         return new ResolvedTableColumns(tableColumns, columnsByName);
     }
@@ -62,7 +65,39 @@ public class ImportPrepareSupport {
         return sql.toString();
     }
 
-    private String quoteIdentifier(String quote, String identifier) {
+    /** Wraps an identifier in the database's quote string ("" quote = no quoting). */
+    public static String quoteIdentifier(String quote, String identifier) {
         return quote.isEmpty() ? identifier : quote + identifier + quote;
+    }
+
+    /**
+     * Maps a file header's column names onto real table columns, in file order.
+     * Rejects empty names, duplicates (case-insensitive), and names that do not
+     * match any column of the target table; {@code formatName} (e.g. "CSV") is
+     * used in the error messages.
+     */
+    public List<ColumnMetadata> matchColumns(List<String> headerNames,
+                                             ResolvedTableColumns resolved,
+                                             String tableName, String formatName) {
+        List<ColumnMetadata> targetColumns = new ArrayList<>();
+        Set<String> seenHeaders = new HashSet<>();
+        for (String header : headerNames) {
+            String normalized = header == null ? "" : header.trim();
+            if (normalized.isEmpty()) {
+                throw new ImportFailureException(1,
+                        formatName + " header contains an empty column name");
+            }
+            if (!seenHeaders.add(normalized.toLowerCase(Locale.ROOT))) {
+                throw new ImportFailureException(1,
+                        "Duplicate " + formatName + " header: " + normalized);
+            }
+            ColumnMetadata column = resolved.byName().get(normalized.toLowerCase(Locale.ROOT));
+            if (column == null) {
+                throw new ImportFailureException(1, formatName + " header '" + normalized
+                        + "' does not match any column of table " + tableName);
+            }
+            targetColumns.add(column);
+        }
+        return targetColumns;
     }
 }

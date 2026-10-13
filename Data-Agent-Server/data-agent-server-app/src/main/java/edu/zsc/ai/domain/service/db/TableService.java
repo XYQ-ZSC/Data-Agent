@@ -4,10 +4,12 @@ import edu.zsc.ai.domain.model.context.DbContext;
 import edu.zsc.ai.domain.model.dto.request.db.BatchTableRowOperationRequest;
 import edu.zsc.ai.domain.model.dto.response.db.BatchTableRowsResponse;
 import edu.zsc.ai.domain.model.dto.response.db.ExecuteSqlResponse;
+import edu.zsc.ai.domain.model.dto.response.db.ImportTableDataResponse;
 import edu.zsc.ai.domain.model.dto.response.db.TableDataResponse;
+import edu.zsc.ai.domain.service.db.transfer.TableDataExporter;
 import edu.zsc.ai.plugin.model.db.TableRowValue;
 
-import java.io.OutputStream;
+import java.io.InputStream;
 import java.util.List;
 
 public interface TableService {
@@ -47,80 +49,22 @@ public interface TableService {
             List<BatchTableRowOperationRequest> operations, boolean force);
 
     /**
-     * Export all rows of a table as CSV (UTF-8 with BOM) to the given output stream.
-     * Data is fetched page by page and written incrementally.
-     * The {@code onBeforeFirstWrite} callback runs after the first page query succeeds
-     * and before any byte is written, so the caller can set response headers only when
-     * the export can actually start.
-     * @param columns column names to export (case-insensitive, in table order);
-     *                null exports all columns
+     * Return the exporter registered for the given format (CSV / JSON / SQL /
+     * XLSX / XLS, case-insensitive). The caller uses its metadata (extension,
+     * content type) and its export method directly; unsupported formats are
+     * rejected with a BusinessException.
      */
-    void exportTableDataCsv(DbContext db, String tableName, List<String> columns,
-                            OutputStream outputStream, Runnable onBeforeFirstWrite);
+    TableDataExporter resolveExporter(String fileType);
 
     /**
-     * Export all rows of a table as a JSON array of objects (keys are column headers)
-     * to the given output stream. Data is fetched page by page and written incrementally.
-     * @param columns column names to export (case-insensitive, in table order);
-     *                null exports all columns
+     * Import rows from an uploaded file into a table. The format is resolved
+     * through the strategy registry; unsupported formats are rejected. All
+     * inserts run inside one transaction: any row failure triggers a full rollback.
+     * @param fileType format key (CSV / JSON / SQL / XLSX / XLS), case-insensitive
+     * @param encoding requested file charset (AUTO / UTF-8 / GBK); only text
+     *                 formats like CSV use it
      */
-    void exportTableDataJson(DbContext db, String tableName, List<String> columns,
-                             OutputStream outputStream, Runnable onBeforeFirstWrite);
-
-    /**
-     * Export all rows of a table as INSERT statements to the given output stream.
-     * Data is fetched page by page and written incrementally.
-     * @param columns column names to export (case-insensitive, in table order);
-     *                null exports all columns
-     */
-    void exportTableDataSql(DbContext db, String tableName, List<String> columns,
-                            OutputStream outputStream, Runnable onBeforeFirstWrite);
-
-    /**
-     * Export all rows of a table as an Excel workbook (.xlsx or .xls) to the given
-     * output stream. XLSX is written with the streaming SXSSF API; XLS uses HSSF and
-     * is limited to 65535 data rows.
-     * @param format "XLSX" or "XLS"
-     * @param columns column names to export (case-insensitive, in table order);
-     *                null exports all columns
-     */
-    void exportTableDataExcel(DbContext db, String tableName, String format, List<String> columns,
-                              OutputStream outputStream, Runnable onBeforeFirstWrite);
-
-    /**
-     * Import rows from an uploaded CSV file into a table. The first CSV line must be
-     * a header row whose names match table columns. All inserts run inside one
-     * transaction: any row failure triggers a full rollback. The encoding is the
-     * requested file charset: AUTO (default) / UTF-8 / GBK.
-     */
-    edu.zsc.ai.domain.model.dto.response.db.ImportTableDataResponse importTableDataCsv(
-            DbContext db, String tableName, java.io.InputStream inputStream, String encoding);
-
-    /**
-     * Import rows from an uploaded JSON file into a table. The file must contain a
-     * top-level JSON array of row objects whose field names match table columns;
-     * the first row object fixes the column list like a CSV header. All inserts run
-     * inside one transaction: any row failure triggers a full rollback.
-     */
-    edu.zsc.ai.domain.model.dto.response.db.ImportTableDataResponse importTableDataJson(
-            DbContext db, String tableName, java.io.InputStream inputStream);
-
-    /**
-     * Import rows from an uploaded SQL file into a table. The file must contain
-     * INSERT statements (comments are skipped); only INSERT is allowed so destructive
-     * statements in the file are rejected. All statements run inside one transaction:
-     * any failure triggers a full rollback.
-     */
-    edu.zsc.ai.domain.model.dto.response.db.ImportTableDataResponse importTableDataSql(
-            DbContext db, String tableName, java.io.InputStream inputStream);
-
-    /**
-     * Import rows from an uploaded Excel file (.xlsx or .xls, auto-detected) into a
-     * table. The first sheet's first row must be a header row whose names match table
-     * columns. All inserts run inside one transaction: any row failure triggers a
-     * full rollback.
-     */
-    edu.zsc.ai.domain.model.dto.response.db.ImportTableDataResponse importTableDataExcel(
-            DbContext db, String tableName, java.io.InputStream inputStream);
+    ImportTableDataResponse importTableData(
+            DbContext db, String tableName, String fileType, InputStream inputStream, String encoding);
 }
 

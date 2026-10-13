@@ -1,5 +1,6 @@
 package edu.zsc.ai.api.controller.db;
 
+import edu.zsc.ai.domain.exception.BusinessException;
 import edu.zsc.ai.domain.model.context.DbContext;
 import edu.zsc.ai.domain.model.dto.request.db.BatchTableRowsRequest;
 import edu.zsc.ai.domain.model.dto.request.db.DeleteTableRowRequest;
@@ -14,6 +15,7 @@ import edu.zsc.ai.domain.model.dto.response.db.ExecuteSqlResponse;
 import edu.zsc.ai.domain.model.dto.response.db.ImportTableDataResponse;
 import edu.zsc.ai.domain.model.dto.response.db.TableDataResponse;
 import edu.zsc.ai.domain.service.db.TableService;
+import edu.zsc.ai.domain.service.db.transfer.TableDataExporter;
 import edu.zsc.ai.plugin.model.db.TableRowValue;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotNull;
@@ -32,8 +34,10 @@ import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
 
 import jakarta.servlet.http.HttpServletResponse;
+import java.io.IOException;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
+import java.util.Arrays;
 import java.util.List;
 
 @Slf4j
@@ -172,22 +176,15 @@ public class TableController {
                 connectionId, tableName, catalog, schema, fileType, encoding, file.getSize());
 
         if (file.isEmpty()) {
-            throw new edu.zsc.ai.domain.exception.BusinessException("Uploaded file is empty");
+            throw new BusinessException("Uploaded file is empty");
         }
 
         DbContext db = new DbContext(connectionId, catalog, schema);
-        String type = fileType == null ? "" : fileType.trim().toUpperCase();
         try {
-            ImportTableDataResponse result = switch (type) {
-                case "CSV" -> tableService.importTableDataCsv(db, tableName, file.getInputStream(), encoding);
-                case "JSON" -> tableService.importTableDataJson(db, tableName, file.getInputStream());
-                case "SQL" -> tableService.importTableDataSql(db, tableName, file.getInputStream());
-                case "XLSX", "XLS" -> tableService.importTableDataExcel(db, tableName, file.getInputStream());
-                default -> throw new edu.zsc.ai.domain.exception.BusinessException(
-                        "Import format '" + fileType + "' is not supported yet");
-            };
+            ImportTableDataResponse result = tableService.importTableData(
+                    db, tableName, fileType, file.getInputStream(), encoding);
             return ApiResponse.success(result);
-        } catch (java.io.IOException ex) {
+        } catch (IOException ex) {
             throw new RuntimeException("Failed to read uploaded file: " + ex.getMessage(), ex);
         }
     }
@@ -200,52 +197,25 @@ public class TableController {
             @RequestParam(required = false) String schema,
             @RequestParam(defaultValue = "CSV") String fileType,
             @RequestParam(required = false) String columns,
-            HttpServletResponse response) throws java.io.IOException {
+            HttpServletResponse response) throws IOException {
         log.info("Exporting table data: connectionId={}, tableName={}, catalog={}, schema={}, fileType={}, columns={}",
                 connectionId, tableName, catalog, schema, fileType, columns);
 
-        String type = fileType == null ? "" : fileType.trim().toUpperCase();
-        if (!"CSV".equals(type) && !"JSON".equals(type) && !"SQL".equals(type)
-                && !"XLSX".equals(type) && !"XLS".equals(type)) {
-            response.setStatus(HttpServletResponse.SC_BAD_REQUEST);
-            return;
-        }
+        // Format metadata comes from the strategy itself; this controller knows no formats.
+        TableDataExporter exporter = tableService.resolveExporter(fileType);
         List<String> selectedColumns = parseExportColumns(columns);
 
-        String extension = switch (type) {
-            case "JSON" -> ".json";
-            case "SQL" -> ".sql";
-            case "XLSX" -> ".xlsx";
-            case "XLS" -> ".xls";
-            default -> ".csv";
-        };
-        String contentType = switch (type) {
-            case "JSON" -> "application/json; charset=UTF-8";
-            case "SQL" -> "application/sql; charset=UTF-8";
-            case "XLSX" -> "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
-            case "XLS" -> "application/vnd.ms-excel";
-            default -> "text/csv; charset=UTF-8";
-        };
-
         DbContext db = new DbContext(connectionId, catalog, schema);
+        String extension = exporter.extension(fileType);
         Runnable prepareHeaders = () -> {
             String encodedFileName = URLEncoder.encode(tableName + extension, StandardCharsets.UTF_8)
                     .replace("+", "%20");
-            response.setContentType(contentType);
+            response.setContentType(exporter.contentType(fileType));
             response.setHeader(HttpHeaders.CONTENT_DISPOSITION,
                     "attachment; filename*=UTF-8''" + encodedFileName);
         };
 
-        switch (type) {
-            case "JSON" -> tableService.exportTableDataJson(db, tableName, selectedColumns,
-                    response.getOutputStream(), prepareHeaders);
-            case "SQL" -> tableService.exportTableDataSql(db, tableName, selectedColumns,
-                    response.getOutputStream(), prepareHeaders);
-            case "XLSX", "XLS" -> tableService.exportTableDataExcel(db, tableName, type, selectedColumns,
-                    response.getOutputStream(), prepareHeaders);
-            default -> tableService.exportTableDataCsv(db, tableName, selectedColumns,
-                    response.getOutputStream(), prepareHeaders);
-        }
+        exporter.export(db, tableName, fileType, selectedColumns, response.getOutputStream(), prepareHeaders);
     }
 
     /**
@@ -256,7 +226,7 @@ public class TableController {
         if (columns == null || columns.isBlank()) {
             return null;
         }
-        return java.util.Arrays.stream(columns.split(","))
+        return Arrays.stream(columns.split(","))
                 .map(String::trim)
                 .filter(item -> !item.isEmpty())
                 .toList();

@@ -2,15 +2,9 @@ package edu.zsc.ai.domain.service.db.transfer.export;
 
 import edu.zsc.ai.domain.model.context.DbContext;
 import edu.zsc.ai.domain.service.db.ConnectionService;
-import edu.zsc.ai.domain.service.db.impl.ActiveConnectionRegistry;
-import edu.zsc.ai.domain.service.db.transfer.TransferConstants;
-import edu.zsc.ai.plugin.capability.TableManager;
-import edu.zsc.ai.plugin.manager.DefaultPluginManager;
+import edu.zsc.ai.domain.service.db.transfer.ImportPrepareSupport;
 import edu.zsc.ai.plugin.model.command.sql.SqlColumnInfo;
 import edu.zsc.ai.plugin.model.command.sql.SqlCommandResult;
-import lombok.RequiredArgsConstructor;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 import java.io.BufferedWriter;
@@ -18,92 +12,98 @@ import java.io.IOException;
 import java.io.OutputStream;
 import java.io.OutputStreamWriter;
 import java.nio.charset.StandardCharsets;
-import java.sql.Connection;
 import java.sql.Types;
 import java.util.Date;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors;
 
 /**
  * Exports all rows of a table as INSERT statements, page by page.
  */
 @Component
-@RequiredArgsConstructor
-public class SqlTableDataExporter {
+public class SqlTableDataExporter extends AbstractTableDataExporter<SqlTableDataExporter.SqlSession> {
 
-    private static final Logger log = LoggerFactory.getLogger(SqlTableDataExporter.class);
+    public SqlTableDataExporter(ConnectionService connectionService) {
+        super(connectionService);
+    }
 
-    private final ConnectionService connectionService;
+    @Override
+    public String fileType() {
+        return "SQL";
+    }
 
-    public void export(DbContext db, String tableName, List<String> columns,
-                       OutputStream outputStream, Runnable onBeforeFirstWrite) {
-        connectionService.openConnection(db);
+    @Override
+    public String extension(String fileType) {
+        return ".sql";
+    }
 
-        ActiveConnectionRegistry.ActiveConnection active = ActiveConnectionRegistry.getOwnedConnection(db);
-        TableManager provider = DefaultPluginManager.getInstance().getTableManagerByPluginId(active.pluginId());
+    @Override
+    public String contentType(String fileType) {
+        return "application/sql; charset=UTF-8";
+    }
 
-        try (ActiveConnectionRegistry.BorrowedConnection borrowed = active.borrowConnection();
-             OutputStreamWriter streamWriter = new OutputStreamWriter(outputStream, StandardCharsets.UTF_8);
-             BufferedWriter writer = new BufferedWriter(streamWriter)) {
-            Connection connection = borrowed.connection();
-            int offset = 0;
+    @Override
+    protected SqlSession onStart(OutputStream outputStream, DbContext db, String tableName, String fileType,
+                                 List<String> headers, List<Integer> columnIndexes,
+                                 SqlCommandResult firstPage, String identifierQuote) throws IOException {
+        OutputStreamWriter streamWriter = new OutputStreamWriter(outputStream, StandardCharsets.UTF_8);
+        BufferedWriter writer = new BufferedWriter(streamWriter);
 
-            // Query the first page before writing anything, so connection/query errors
-            // surface before the HTTP response is committed.
-            SqlCommandResult first = provider.getTableData(connection, db.catalog(), db.schema(),
-                    tableName, offset, TransferConstants.EXPORT_PAGE_SIZE);
+        List<String> selectedHeaders = columnIndexes.stream().map(headers::get).toList();
+        Map<String, Integer> jdbcTypeByName = resolveJdbcTypes(firstPage);
 
-            List<String> headers = first.getHeaders() == null ? List.of() : first.getHeaders();
-            List<Integer> columnIndexes = ExportColumnSelector.resolve(headers, columns);
-            List<String> selectedHeaders = columnIndexes.stream().map(headers::get).toList();
+        writer.write("-- DataAgent data export");
+        writer.write("\r\n");
+        writer.write("-- Table: " + tableName);
+        writer.write("\r\n");
+        writer.write("-- Exported at: " + new Date());
+        writer.write("\r\n");
+        writer.write("SET NAMES utf8mb4;");
+        writer.write("\r\n\r\n");
 
-            // First page query succeeded: it is now safe to commit file-download headers.
-            onBeforeFirstWrite.run();
+        // Quote table and column identifiers so reserved words (order, group, ...)
+        // round-trip through export -> import.
+        String quotedTable = ImportPrepareSupport.quoteIdentifier(identifierQuote, tableName);
+        String columnList = selectedHeaders.stream()
+                .map(header -> ImportPrepareSupport.quoteIdentifier(identifierQuote, header))
+                .collect(Collectors.joining(", "));
+        return new SqlSession(writer, quotedTable, columnList, selectedHeaders, columnIndexes, jdbcTypeByName);
+    }
 
-            Map<String, Integer> jdbcTypeByName = resolveJdbcTypes(first);
-
-            writer.write("-- DataAgent data export");
-            writer.write("\r\n");
-            writer.write("-- Table: " + tableName);
-            writer.write("\r\n");
-            writer.write("-- Exported at: " + new Date());
-            writer.write("\r\n");
-            writer.write("SET NAMES utf8mb4;");
-            writer.write("\r\n\r\n");
-
-            String columnList = String.join(", ", selectedHeaders);
-            List<List<Object>> firstRows = first.getRows();
-            if (firstRows != null && !firstRows.isEmpty()) {
-                writeInsertStatements(writer, tableName, columnList, selectedHeaders, columnIndexes,
-                        jdbcTypeByName, firstRows);
-                log.info("SQL export started: connectionId={}, tableName={}, firstPageRows={}",
-                        db.connectionId(), tableName, firstRows.size());
-
-                offset += TransferConstants.EXPORT_PAGE_SIZE;
-                while (firstRows.size() == TransferConstants.EXPORT_PAGE_SIZE) {
-                    SqlCommandResult page = provider.getTableData(connection, db.catalog(), db.schema(),
-                            tableName, offset, TransferConstants.EXPORT_PAGE_SIZE);
-                    List<List<Object>> rows = page.getRows();
-                    if (rows == null || rows.isEmpty()) {
-                        break;
-                    }
-                    writeInsertStatements(writer, tableName, columnList, selectedHeaders, columnIndexes,
-                            jdbcTypeByName, rows);
-                    writer.flush();
-                    if (rows.size() < TransferConstants.EXPORT_PAGE_SIZE) {
-                        break;
-                    }
-                    offset += TransferConstants.EXPORT_PAGE_SIZE;
+    @Override
+    protected void writeRows(SqlSession session, List<List<Object>> rows) throws IOException {
+        BufferedWriter writer = session.writer();
+        for (List<Object> row : rows) {
+            writer.write("INSERT INTO " + session.quotedTable() + " (" + session.columnList() + ") VALUES (");
+            List<Integer> columnIndexes = session.columnIndexes();
+            for (int i = 0; i < columnIndexes.size(); i++) {
+                if (i > 0) {
+                    writer.write(", ");
                 }
+                int index = columnIndexes.get(i);
+                Object value = index < row.size() ? row.get(index) : null;
+                Integer jdbcType = session.jdbcTypeByName().get(session.selectedHeaders().get(i));
+                writer.write(toSqlLiteral(value, jdbcType));
             }
-
-            writer.flush();
-            log.info("SQL export completed: connectionId={}, tableName={}, lastOffset={}",
-                    db.connectionId(), tableName, offset);
-        } catch (IOException ex) {
-            throw new RuntimeException("Export SQL failed: " + ex.getMessage(), ex);
+            writer.write(");\r\n");
         }
+    }
+
+    @Override
+    protected void flushPage(SqlSession session) throws IOException {
+        session.writer().flush();
+    }
+
+    @Override
+    protected void onFinish(SqlSession session) throws IOException {
+        session.writer().flush();
+    }
+
+    @Override
+    protected void cleanup(SqlSession session) {
+        closeQuietly(session.writer());
     }
 
     private Map<String, Integer> resolveJdbcTypes(SqlCommandResult result) {
@@ -116,25 +116,6 @@ public class SqlTableDataExporter {
             }
         }
         return map;
-    }
-
-    private void writeInsertStatements(BufferedWriter writer, String tableName, String columnList,
-                                       List<String> headers, List<Integer> columnIndexes,
-                                       Map<String, Integer> jdbcTypeByName,
-                                       List<List<Object>> rows) throws IOException {
-        for (List<Object> row : rows) {
-            writer.write("INSERT INTO " + tableName + " (" + columnList + ") VALUES (");
-            for (int i = 0; i < columnIndexes.size(); i++) {
-                if (i > 0) {
-                    writer.write(", ");
-                }
-                int index = columnIndexes.get(i);
-                Object value = index < row.size() ? row.get(index) : null;
-                Integer jdbcType = jdbcTypeByName.get(headers.get(i));
-                writer.write(toSqlLiteral(value, jdbcType));
-            }
-            writer.write(");\r\n");
-        }
     }
 
     private String toSqlLiteral(Object value, Integer jdbcType) {
@@ -185,5 +166,13 @@ public class SqlTableDataExporter {
         return value.replace("\\", "\\\\")
                 .replace("'", "''")
                 .replace("\0", "");
+    }
+
+    /**
+     * Session that carries the writer and resolved statement context across template-method calls.
+     */
+    record SqlSession(BufferedWriter writer, String quotedTable, String columnList,
+                      List<String> selectedHeaders, List<Integer> columnIndexes,
+                      Map<String, Integer> jdbcTypeByName) {
     }
 }

@@ -10,14 +10,8 @@ import edu.zsc.ai.domain.model.dto.response.db.ImportTableDataResponse;
 import edu.zsc.ai.domain.model.dto.response.db.TableDataResponse;
 import edu.zsc.ai.domain.service.db.ConnectionService;
 import edu.zsc.ai.domain.service.db.TableService;
-import edu.zsc.ai.domain.service.db.transfer.export.CsvTableDataExporter;
-import edu.zsc.ai.domain.service.db.transfer.export.ExcelTableDataExporter;
-import edu.zsc.ai.domain.service.db.transfer.export.JsonTableDataExporter;
-import edu.zsc.ai.domain.service.db.transfer.export.SqlTableDataExporter;
-import edu.zsc.ai.domain.service.db.transfer.importer.CsvTableDataImporter;
-import edu.zsc.ai.domain.service.db.transfer.importer.ExcelTableDataImporter;
-import edu.zsc.ai.domain.service.db.transfer.importer.JsonTableDataImporter;
-import edu.zsc.ai.domain.service.db.transfer.importer.SqlTableDataImporter;
+import edu.zsc.ai.domain.service.db.transfer.TableDataExporter;
+import edu.zsc.ai.domain.service.db.transfer.TableDataTransferRegistry;
 import edu.zsc.ai.plugin.capability.TableManager;
 import edu.zsc.ai.plugin.manager.DefaultPluginManager;
 import edu.zsc.ai.plugin.model.command.sql.SqlCommandResult;
@@ -28,7 +22,6 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.io.InputStream;
-import java.io.OutputStream;
 import java.sql.Connection;
 import java.sql.SQLException;
 import java.util.ArrayList;
@@ -47,15 +40,7 @@ public class TableServiceImpl implements TableService {
 
     private final ConnectionService connectionService;
 
-    private final CsvTableDataExporter csvTableDataExporter;
-    private final JsonTableDataExporter jsonTableDataExporter;
-    private final SqlTableDataExporter sqlTableDataExporter;
-    private final ExcelTableDataExporter excelTableDataExporter;
-
-    private final CsvTableDataImporter csvTableDataImporter;
-    private final JsonTableDataImporter jsonTableDataImporter;
-    private final SqlTableDataImporter sqlTableDataImporter;
-    private final ExcelTableDataImporter excelTableDataImporter;
+    private final TableDataTransferRegistry transferRegistry;
 
     @Override
     public List<String> getTables(DbContext db) {
@@ -245,53 +230,15 @@ public class TableServiceImpl implements TableService {
         return response;
     }
 
-    
     @Override
-    public void exportTableDataCsv(DbContext db, String tableName, List<String> columns,
-                                   OutputStream outputStream, Runnable onBeforeFirstWrite) {
-        csvTableDataExporter.export(db, tableName, columns, outputStream, onBeforeFirstWrite);
+    public TableDataExporter resolveExporter(String fileType) {
+        return transferRegistry.resolveExporter(fileType);
     }
 
     @Override
-    public void exportTableDataJson(DbContext db, String tableName, List<String> columns,
-                                    OutputStream outputStream, Runnable onBeforeFirstWrite) {
-        jsonTableDataExporter.export(db, tableName, columns, outputStream, onBeforeFirstWrite);
-    }
-
-    @Override
-    public void exportTableDataSql(DbContext db, String tableName, List<String> columns,
-                                   OutputStream outputStream, Runnable onBeforeFirstWrite) {
-        sqlTableDataExporter.export(db, tableName, columns, outputStream, onBeforeFirstWrite);
-    }
-
-    @Override
-    public void exportTableDataExcel(DbContext db, String tableName, String format, List<String> columns,
-                                     OutputStream outputStream, Runnable onBeforeFirstWrite) {
-        excelTableDataExporter.export(db, tableName, format, columns, outputStream, onBeforeFirstWrite);
-    }
-
-    @Override
-    public ImportTableDataResponse importTableDataCsv(DbContext db, String tableName,
-                                                      InputStream inputStream, String encoding) {
-        return csvTableDataImporter.importData(db, tableName, inputStream, encoding);
-    }
-
-    @Override
-    public ImportTableDataResponse importTableDataJson(DbContext db, String tableName,
-                                                       InputStream inputStream) {
-        return jsonTableDataImporter.importData(db, tableName, inputStream);
-    }
-
-    @Override
-    public ImportTableDataResponse importTableDataSql(DbContext db, String tableName,
-                                                      InputStream inputStream) {
-        return sqlTableDataImporter.importData(db, tableName, inputStream);
-    }
-
-    @Override
-    public ImportTableDataResponse importTableDataExcel(DbContext db, String tableName,
-                                                        InputStream inputStream) {
-        return excelTableDataImporter.importData(db, tableName, inputStream);
+    public ImportTableDataResponse importTableData(DbContext db, String tableName, String fileType,
+                                                   InputStream inputStream, String encoding) {
+        return transferRegistry.resolveImporter(fileType).importData(db, tableName, inputStream, encoding);
     }
 
     @Override
