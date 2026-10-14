@@ -40,16 +40,14 @@ export function visibleColumns<T extends { name: string }>(
   return columns.filter((column) => chosen.has(column.name));
 }
 
-const NODE_ID_SEPARATOR = '|';
-
 /** Keeps table identity without XML control characters, so image export can serialize the diagram. */
 export function toNodeId(tableKey: string) {
-  return tableKey.split('\0').map((part) => encodeURIComponent(part)).join(NODE_ID_SEPARATOR);
+  return encodeURIComponent(tableKey);
 }
 
 function storedNodeId(id: string) {
   if (!id.includes('\u001f')) return id;
-  return id.split('\u001f').map((part) => encodeURIComponent(part)).join(NODE_ID_SEPARATOR);
+  return toNodeId(id.split('\u001f').join('\0'));
 }
 
 export function layoutStorageKey(connectionId: string | number, catalog?: string | null, schema?: string | null) {
@@ -169,9 +167,9 @@ export function mergeStoredPositions(points: LayoutPoint[], stored: StoredLayout
   });
 }
 
-function gridLayout(tables: ErTable[]): LayoutPoint[] {
+function gridLayout(tables: ErTable[], expandedIds: ReadonlySet<string>): LayoutPoint[] {
   const columns = Math.max(1, Math.ceil(Math.sqrt(Math.max(tables.length, 1))));
-  const heights = tables.map((table) => cardHeight(table.columns.length));
+  const heights = tables.map((table) => cardHeight(table.columns.length, expandedIds.has(toNodeId(tableId(table)))));
   const rowCount = Math.ceil(tables.length / columns);
   const rowHeights: number[] = [];
   for (let row = 0; row < rowCount; row += 1) {
@@ -195,12 +193,16 @@ function gridLayout(tables: ErTable[]): LayoutPoint[] {
   });
 }
 
-export async function layoutDiagram(tables: ErTable[], relations: ErRelation[]): Promise<LayoutPoint[]> {
+export async function layoutDiagram(
+  tables: ErTable[],
+  relations: ErRelation[],
+  expandedIds: ReadonlySet<string> = new Set(),
+): Promise<LayoutPoint[]> {
   if (tables.length === 0) return [];
   const points = tables.map((table) => ({
     id: toNodeId(tableId(table)),
     width: CARD_WIDTH,
-    height: cardHeight(table.columns.length),
+    height: cardHeight(table.columns.length, expandedIds.has(toNodeId(tableId(table)))),
   }));
   const known = new Set(points.map((point) => point.id));
   const edges = relations.flatMap((relation, index) => {
@@ -238,6 +240,6 @@ export async function layoutDiagram(tables: ErTable[], relations: ErRelation[]):
       };
     }));
   } catch {
-    return normalizeLayout(gridLayout(tables));
+    return normalizeLayout(gridLayout(tables, expandedIds));
   }
 }

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { ErRelation, ErTable } from '../../services/table.service';
-import { columnKey } from './erDiagramRelations';
+import { columnKey, tableId } from './erDiagramRelations';
 import {
   cardHeight,
   clearStoredLayout,
@@ -67,6 +67,22 @@ describe('ER diagram card height', () => {
 });
 
 describe('ER diagram layout storage', () => {
+  it('uses XML-safe, distinct node IDs for scoped and quoted table names', () => {
+    const names = ['\0app\0users', '\0audit\0users', '\0app\0用户"表'];
+    const ids = names.map(toNodeId);
+    expect(new Set(ids).size).toBe(names.length);
+    ids.forEach((id, index) => {
+      expect(decodeURIComponent(id)).toBe(names[index]);
+      expect(id).not.toMatch(/[\u0000-\u001f"<>]/);
+    });
+  });
+
+  it('reads layouts saved before node IDs were made XML-safe', () => {
+    const oldId = '\u001fapp\u001fusers';
+    const store = memoryStore({ er: JSON.stringify({ [oldId]: { x: 10, y: 20 } }) });
+    expect(readStoredLayout('er', store)).toEqual({ [toNodeId('\0app\0users')]: { x: 10, y: 20 } });
+  });
+
   it('keeps a saved position and leaves the others on the computed layout', () => {
     const points = [point('users', 10, 20), point('orders', 400, 20)];
     const merged = mergeStoredPositions(points, { orders: { x: 12, y: 80 } });
@@ -89,7 +105,7 @@ describe('ER diagram layout storage', () => {
 
   it('uses an image-export-safe id and still reads a previously saved position', () => {
     const id = toNodeId('app\0dbo\0orders');
-    expect(id).toBe('app|dbo|orders');
+    expect(id).toBe('app%00dbo%00orders');
     expect(id).not.toMatch(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/);
     const legacy = 'app\u001fdbo\u001forders';
     const store = memoryStore({ er: JSON.stringify({ [legacy]: { x: 12, y: 40 } }) });
@@ -145,6 +161,20 @@ describe('ER diagram opening frame', () => {
 });
 
 describe('ELK diagram layout', () => {
+  it('lays out expanded tables at their full height without overlapping another table', async () => {
+    const tables = [table('long_table', 100), table('other'), table('third')];
+    const points = await layoutDiagram(tables, [], new Set([toNodeId(tableId(tables[0]))]));
+    expect(points[0].height).toBe(cardHeight(100, true));
+    for (let i = 0; i < points.length; i += 1) {
+      for (let j = i + 1; j < points.length; j += 1) {
+        const a = points[i];
+        const b = points[j];
+        expect(a.x + a.width <= b.x || b.x + b.width <= a.x
+          || a.y + a.height <= b.y || b.y + b.height <= a.y).toBe(true);
+      }
+    }
+  });
+
   it('places a child table to the side of the table it references', async () => {
     const users = table('users');
     const orders = table('orders');

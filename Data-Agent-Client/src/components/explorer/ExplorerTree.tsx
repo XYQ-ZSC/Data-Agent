@@ -24,6 +24,10 @@ interface ExplorerTreeProps {
   onDelete: (node: ExplorerNode, type: ExplorerNodeType) => void;
   onOpenQueryConsole: (node: ExplorerNode) => void;
   onCreateTable: (node: ExplorerNode) => void;
+  onImportData: (node: ExplorerNode) => void;
+  onExportData: (node: ExplorerNode) => void;
+  onExportTablesWizard: (node: ExplorerNode) => void;
+  onImportTablesWizard: (node: ExplorerNode) => void;
   onOpenErDiagram: (node: ExplorerNode) => void;
 }
 
@@ -95,6 +99,10 @@ export const ExplorerTree = forwardRef<ExplorerTreeHandle, ExplorerTreeProps>(fu
   onDelete,
   onOpenQueryConsole,
   onCreateTable,
+  onImportData,
+  onExportData,
+  onExportTablesWizard,
+  onImportTablesWizard,
   onOpenErDiagram,
 }: ExplorerTreeProps, ref) {
   const { t } = useTranslation();
@@ -183,6 +191,10 @@ export const ExplorerTree = forwardRef<ExplorerTreeHandle, ExplorerTreeProps>(fu
         onDelete={onDelete}
         onOpenQueryConsole={onOpenQueryConsole}
         onCreateTable={onCreateTable}
+        onImportData={onImportData}
+        onExportData={onExportData}
+        onExportTablesWizard={onExportTablesWizard}
+        onImportTablesWizard={onImportTablesWizard}
         onOpenErDiagram={onOpenErDiagram}
       />
     );

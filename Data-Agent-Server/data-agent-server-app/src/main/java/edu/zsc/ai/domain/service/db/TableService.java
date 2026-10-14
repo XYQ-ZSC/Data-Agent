@@ -4,9 +4,12 @@ import edu.zsc.ai.domain.model.context.DbContext;
 import edu.zsc.ai.domain.model.dto.request.db.BatchTableRowOperationRequest;
 import edu.zsc.ai.domain.model.dto.response.db.BatchTableRowsResponse;
 import edu.zsc.ai.domain.model.dto.response.db.ExecuteSqlResponse;
+import edu.zsc.ai.domain.model.dto.response.db.ImportTableDataResponse;
 import edu.zsc.ai.domain.model.dto.response.db.TableDataResponse;
+import edu.zsc.ai.domain.service.db.transfer.TableDataExporter;
 import edu.zsc.ai.plugin.model.db.TableRowValue;
 
+import java.io.InputStream;
 import java.util.List;
 
 public interface TableService {
@@ -44,4 +47,24 @@ public interface TableService {
      */
     BatchTableRowsResponse batchTableRows(DbContext db, String tableName,
             List<BatchTableRowOperationRequest> operations, boolean force);
+
+    /**
+     * Return the exporter registered for the given format (CSV / JSON / SQL /
+     * XLSX / XLS, case-insensitive). The caller uses its metadata (extension,
+     * content type) and its export method directly; unsupported formats are
+     * rejected with a BusinessException.
+     */
+    TableDataExporter resolveExporter(String fileType);
+
+    /**
+     * Import rows from an uploaded file into a table. The format is resolved
+     * through the strategy registry; unsupported formats are rejected. All
+     * inserts run inside one transaction: any row failure triggers a full rollback.
+     * @param fileType format key (CSV / JSON / SQL / XLSX / XLS), case-insensitive
+     * @param encoding requested file charset (AUTO / UTF-8 / GBK); only text
+     *                 formats like CSV use it
+     */
+    ImportTableDataResponse importTableData(
+            DbContext db, String tableName, String fileType, InputStream inputStream, String encoding);
 }
+
