@@ -41,7 +41,7 @@ public class JsonTableDataExporter extends AbstractTableDataExporter<JsonTableDa
     protected JsonSession onStart(OutputStream outputStream, DbContext db, String tableName, String fileType,
                                   List<String> headers, List<Integer> columnIndexes,
                                   SqlCommandResult firstPage, String identifierQuote) throws IOException {
-        JsonGenerator generator = new JsonFactory().createGenerator(outputStream, JsonEncoding.UTF8);
+        JsonGenerator generator = new JsonFactory().createGenerator(nonClosing(outputStream), JsonEncoding.UTF8);
         // Pretty-printed JSON: each field on its own indented line.
         generator.useDefaultPrettyPrinter();
         generator.writeStartArray();
