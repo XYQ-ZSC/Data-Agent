@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   Background,
@@ -28,11 +28,13 @@ import {
   cardHeight,
   clearStoredLayout,
   hasStoredLayout,
+  layoutBounds,
   layoutDiagram,
   layoutStorageKey,
   mergeStoredPositions,
   readStoredLayout,
   toNodeId,
+  viewportForDiagram,
   writeStoredLayout,
   type LayoutPoint,
 } from './erDiagramLayout';
@@ -125,7 +127,7 @@ function ErDiagramCanvas({ metadata }: ErDiagramTabProps) {
   const updateTabMetadata = useWorkspaceStore((state) => state.updateTabMetadata);
   const switchTab = useWorkspaceStore((state) => state.switchTab);
   const tableDblClickConsoleTarget = useWorkspaceStore((state) => state.tableDblClickConsoleTarget);
-  const { fitView, getNodes } = useReactFlow();
+  const { getNodes, setViewport } = useReactFlow();
   const [diagram, setDiagram] = useState<ErDiagram | null>(null);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
@@ -143,7 +145,8 @@ function ErDiagramCanvas({ metadata }: ErDiagramTabProps) {
   const draggingRef = useRef(false);
   const flowRef = useRef<HTMLDivElement>(null);
   const requestId = useRef(0);
-  const fittedKey = useRef('');
+  const framedToken = useRef(-1);
+  const [layoutVersion, setLayoutVersion] = useState(0);
   const storageKey = layoutStorageKey(metadata.connectionId, metadata.catalog, metadata.schema);
 
   useEffect(() => () => { requestId.current += 1; }, []);
@@ -201,7 +204,13 @@ function ErDiagramCanvas({ metadata }: ErDiagramTabProps) {
     setPinned((current) => (current && !visible.has(current.tableId) ? null : current));
   }, [shown]);
 
-  const placeNodes = useCallback((next: ErDiagram, useStored: boolean, previous = getNodes() as ErTableNodeType[], persist = false) => {
+  const placeNodes = useCallback((
+    next: ErDiagram,
+    useStored: boolean,
+    previous = getNodes() as ErTableNodeType[],
+    persist = false,
+    frame = true,
+  ) => {
     const token = ++requestId.current;
     setLayouting(true);
     const expandedIds = new Set(previous.filter((node) => node.data.expanded).map((node) => node.id));
@@ -213,6 +222,7 @@ function ErDiagramCanvas({ metadata }: ErDiagramTabProps) {
       if (persist) {
         writeStoredLayout(storageKey, Object.fromEntries(points.map((point) => [point.id, { x: point.x, y: point.y }])));
       }
+      if (frame) setLayoutVersion((version) => version + 1);
     }).finally(() => {
       if (token === requestId.current) setLayouting(false);
     });
@@ -223,7 +233,6 @@ function ErDiagramCanvas({ metadata }: ErDiagramTabProps) {
     const previous = (getNodes() as ErTableNodeType[]).map((node) => (
       node.id === nodeId ? { ...node, data: { ...node.data, expanded: !node.data.expanded } } : node
     ));
-    fittedKey.current = '';
     // Re-layout with the actual card sizes; saved collapsed positions would overlap.
     void placeNodes(shown, false, previous, true);
   }, [exporting, getNodes, layouting, placeNodes, shown]);
@@ -420,26 +429,56 @@ function ErDiagramCanvas({ metadata }: ErDiagramTabProps) {
     togglePin,
   ]);
 
-  const fitToWindow = useCallback(() => {
-    void fitView({ padding: '32px', maxZoom: 1, minZoom: 0.08, duration: 0 });
-  }, [fitView]);
+  const frameNodes = useCallback((current: ErTableNodeType[]) => {
+    const pane = flowRef.current;
+    if (!pane || current.length === 0) return Promise.resolve(false);
+    const bounds = layoutBounds(current.map((node) => ({
+      x: node.position.x,
+      y: node.position.y,
+      width: node.measured?.width || node.width || CARD_WIDTH,
+      height: node.measured?.height || node.height || cardHeight(node.data.table.columns.length, node.data.expanded),
+    })));
+    const viewport = viewportForDiagram(bounds, pane.clientWidth, pane.clientHeight);
+    if (!viewport) return Promise.resolve(false);
+    return setViewport(viewport, { duration: 0 }).then((applied) => applied, () => false);
+  }, [setViewport]);
 
-  useEffect(() => {
-    if (layouting || nodes.length === 0) return;
-    const key = nodes.map((node) => node.id).sort().join('\n');
-    if (fittedKey.current === key) return;
-    const frame = requestAnimationFrame(() => {
-      fittedKey.current = key;
-      fitToWindow();
-    });
-    return () => cancelAnimationFrame(frame);
-  }, [fitToWindow, layouting, nodes]);
+  const fitToWindow = useCallback(() => {
+    void frameNodes(getNodes() as ErTableNodeType[]);
+  }, [frameNodes, getNodes]);
+
+  useLayoutEffect(() => {
+    if (layouting || nodes.length === 0 || framedToken.current === layoutVersion) return;
+    let stopped = false;
+    let attempts = 0;
+    let frame = 0;
+    const apply = () => {
+      if (stopped || framedToken.current === layoutVersion) return;
+      void frameNodes(nodes).then((fitted) => {
+        if (stopped || framedToken.current === layoutVersion) return;
+        if (fitted) {
+          framedToken.current = layoutVersion;
+          return;
+        }
+        attempts += 1;
+        if (attempts < 8) frame = requestAnimationFrame(apply);
+      });
+    };
+    apply();
+    const pane = flowRef.current;
+    const observer = pane ? new ResizeObserver(() => apply()) : null;
+    if (pane && observer) observer.observe(pane);
+    return () => {
+      stopped = true;
+      cancelAnimationFrame(frame);
+      observer?.disconnect();
+    };
+  }, [frameNodes, layoutVersion, layouting, nodes]);
 
   const resetLayout = () => {
     if (!shown || shown.tables.length === 0) return;
-    fittedKey.current = '';
     clearStoredLayout(storageKey);
-    void placeNodes(shown, false);
+    void placeNodes(shown, false, getNodes() as ErTableNodeType[], false, false);
   };
 
   const onNodeDragStart = () => {

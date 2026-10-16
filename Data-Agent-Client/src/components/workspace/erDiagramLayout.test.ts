@@ -5,8 +5,11 @@ import {
   cardHeight,
   clearStoredLayout,
   hasStoredLayout,
+  layoutBounds,
   layoutDiagram,
   mergeStoredPositions,
+  normalizeLayout,
+  viewportForDiagram,
   readStoredLayout,
   toNodeId,
   visibleColumns,
@@ -100,11 +103,60 @@ describe('ER diagram layout storage', () => {
     expect(readStoredLayout('er', store)).toBeNull();
   });
 
+  it('uses an image-export-safe id and still reads a previously saved position', () => {
+    const id = toNodeId('app\0dbo\0orders');
+    expect(id).toBe('app%00dbo%00orders');
+    expect(id).not.toMatch(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/);
+    const legacy = 'app\u001fdbo\u001forders';
+    const store = memoryStore({ er: JSON.stringify({ [legacy]: { x: 12, y: 40 } }) });
+    expect(readStoredLayout('er', store)).toEqual({ [id]: { x: 12, y: 40 } });
+  });
+
   it('ignores a stored value that is not a layout', () => {
     const store = memoryStore({ er: '{not json', bad: '[]', partial: '{"a":{"x":1}}' });
     expect(readStoredLayout('er', store)).toBeNull();
     expect(readStoredLayout('bad', store)).toBeNull();
     expect(readStoredLayout('partial', store)).toEqual({});
+  });
+});
+
+describe('ER diagram opening frame', () => {
+  it('anchors the laid-out cards at the top-left origin', () => {
+    const shifted = normalizeLayout([
+      point('users', 400, 660),
+      point('orders', 80, 900),
+    ]);
+    expect(Math.min(...shifted.map((item) => item.x))).toBe(24);
+    expect(Math.min(...shifted.map((item) => item.y))).toBe(24);
+    expect(shifted[0].x - shifted[1].x).toBe(320);
+    expect(shifted[0].y - shifted[1].y).toBe(-240);
+  });
+
+  it('fits a short diagram to the top of the window', () => {
+    const bounds = layoutBounds([
+      { x: 24, y: 24, width: 260, height: 80 },
+      { x: 356, y: 24, width: 260, height: 120 },
+    ]);
+    const viewport = viewportForDiagram(bounds, 1200, 800);
+    expect(viewport?.zoom).toBe(1);
+    expect(viewport && viewport.y + bounds.y * viewport.zoom).toBe(32);
+    expect(viewport && viewport.x + bounds.x * viewport.zoom).toBeGreaterThan(32);
+  });
+
+  it('shrinks a diagram that would otherwise run past the window', () => {
+    const bounds = { x: 24, y: 24, width: 900, height: 1400 };
+    const viewport = viewportForDiagram(bounds, 1000, 700);
+    expect(viewport).toBeTruthy();
+    const zoom = viewport!.zoom;
+    expect(zoom).toBeLessThan(1);
+    const top = viewport!.y + bounds.y * zoom;
+    const bottom = viewport!.y + (bounds.y + bounds.height) * zoom;
+    const left = viewport!.x + bounds.x * zoom;
+    const right = viewport!.x + (bounds.x + bounds.width) * zoom;
+    expect(top).toBeCloseTo(32);
+    expect(bottom).toBeLessThanOrEqual(700 - 32 + 0.01);
+    expect(left).toBeGreaterThanOrEqual(32 - 0.01);
+    expect(right).toBeLessThanOrEqual(1000 - 32 + 0.01);
   });
 });
 
