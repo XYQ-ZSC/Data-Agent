@@ -182,6 +182,7 @@ export function DatabaseExplorer() {
   // Batch import wizard (right-click the tables folder)
   const [batchImportOpen, setBatchImportOpen] = useState(false);
   const [batchImportParams, setBatchImportParams] = useState<BatchImportParams | null>(null);
+  const [batchImportTargetNodeId, setBatchImportTargetNodeId] = useState<string | null>(null);
   const handleImportTablesWizard = (node: ExplorerNode) => {
     const conn = node.dbConnection ?? connections.find((c) => String(c.id) === node.connectionId);
     const catalog = node.catalog ?? conn?.database ?? '';
@@ -190,6 +191,7 @@ export function DatabaseExplorer() {
       catalog: catalog || undefined,
       schema: node.schema || undefined,
     });
+    setBatchImportTargetNodeId(node.id ?? null);
     setBatchImportOpen(true);
   };
 
@@ -367,6 +369,9 @@ export function DatabaseExplorer() {
         open={batchImportOpen}
         onOpenChange={setBatchImportOpen}
         importParams={batchImportParams}
+        onSuccess={() => {
+          if (batchImportTargetNodeId) refreshNodeById(batchImportTargetNodeId);
+        }}
       />
 
       <ImportDataDialog

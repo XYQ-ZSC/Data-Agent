@@ -3,6 +3,7 @@ package edu.zsc.ai.domain.service.db.transfer.export;
 import edu.zsc.ai.domain.model.context.DbContext;
 import edu.zsc.ai.domain.service.db.ConnectionService;
 import edu.zsc.ai.domain.service.db.impl.ActiveConnectionRegistry;
+import edu.zsc.ai.domain.service.db.transfer.ImportPrepareSupport;
 import edu.zsc.ai.domain.service.db.transfer.TableDataExporter;
 import edu.zsc.ai.domain.service.db.transfer.TransferConstants;
 import edu.zsc.ai.plugin.capability.TableManager;
@@ -14,7 +15,6 @@ import org.slf4j.LoggerFactory;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.sql.Connection;
-import java.sql.SQLException;
 import java.util.List;
 
 /**
@@ -47,7 +47,7 @@ public abstract class AbstractTableDataExporter<S> implements TableDataExporter 
         S session = null;
         try (ActiveConnectionRegistry.BorrowedConnection borrowed = active.borrowConnection()) {
             Connection connection = borrowed.connection();
-            String identifierQuote = resolveIdentifierQuote(connection);
+            String identifierQuote = ImportPrepareSupport.resolveIdentifierQuote(connection);
             preCheck(provider, connection, db, tableName, fileType);
 
             // Query the first page before writing anything, so connection/query errors
@@ -110,35 +110,6 @@ public abstract class AbstractTableDataExporter<S> implements TableDataExporter 
      */
     protected void preCheck(TableManager provider, Connection connection, DbContext db,
                             String tableName, String fileType) {
-    }
-
-    /**
-     * Resolves the database's identifier quote string (e.g. backtick on MySQL).
-     * Falls back to no quoting if metadata is unavailable: a metadata hiccup
-     * must not fail an export.
-     */
-    private static String resolveIdentifierQuote(Connection connection) {
-        try {
-            String quote = connection.getMetaData().getIdentifierQuoteString();
-            return (quote == null || quote.isBlank()) ? "" : quote.trim();
-        } catch (SQLException ex) {
-            return "";
-        }
-    }
-
-    /**
-     * Closes a closeable resource, swallowing close-time failures: by the time
-     * cleanup runs the export has already finished or failed, so a close error
-     * is not actionable.
-     */
-    protected static void closeQuietly(AutoCloseable resource) {
-        if (resource == null) {
-            return;
-        }
-        try {
-            resource.close();
-        } catch (Exception ignored) {
-        }
     }
 
     /**
