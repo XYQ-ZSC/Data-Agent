@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Button } from "../ui/Button";
 import { Input } from "../ui/Input";
 import { DialogContent, DialogDescription, DialogHeader, DialogTitle } from "../ui/Dialog";
-import { Github, Eye, EyeOff } from "lucide-react";
+import { Eye, EyeOff } from "lucide-react";
 import { authService } from "../../services/auth.service";
 import { Alert } from "../ui/Alert";
 import { useAuthStore } from "../../store/authStore";
@@ -122,13 +122,7 @@ export function LoginModal({ onSwitchToRegister, onClose }: LoginModalProps) {
                         </span>
                     </div>
                 </div>
-                <div className="grid grid-cols-2 gap-4">
-                    <Button variant="outline" asChild>
-                        <a href={authService.getOAuthUrl('github', window.location.href)}>
-                            <Github className="mr-2 h-4 w-4" />
-                            Github
-                        </a>
-                    </Button>
+                <div className="grid gap-4">
                     <Button
                         type="button"
                         variant="outline"
