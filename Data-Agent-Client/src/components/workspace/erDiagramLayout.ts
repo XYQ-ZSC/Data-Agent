@@ -110,6 +110,13 @@ export function hasStoredLayout(layout: StoredLayout | null) {
 const LAYOUT_ORIGIN = 24;
 const VIEW_PADDING = 32;
 
+export const ER_MIN_ZOOM = 0.08;
+export const ER_MAX_ZOOM = 1.8;
+
+export function formatZoomPercent(zoom: number) {
+  return `${Math.round(zoom * 100)}%`;
+}
+
 /** Moves the whole diagram so its top-left sits on a fixed origin. */
 export function normalizeLayout(points: LayoutPoint[], origin = LAYOUT_ORIGIN): LayoutPoint[] {
   if (points.length === 0) return points;
@@ -150,7 +157,7 @@ export function viewportForDiagram(
     (viewWidth - VIEW_PADDING * 2) / bounds.width,
     (viewHeight - VIEW_PADDING * 2) / bounds.height,
   );
-  const zoom = Math.min(1, Math.max(0.08, fit));
+  const zoom = Math.min(1, Math.max(ER_MIN_ZOOM, fit));
   return {
     x: (viewWidth - bounds.width * zoom) / 2 - bounds.x * zoom,
     y: VIEW_PADDING - bounds.y * zoom,

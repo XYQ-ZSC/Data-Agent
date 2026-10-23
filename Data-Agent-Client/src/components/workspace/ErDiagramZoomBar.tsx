@@ -1,0 +1,59 @@
+import { Panel, useReactFlow, useViewport } from '@xyflow/react';
+import { Minus, Plus } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
+import { I18N_KEYS } from '../../constants/i18nKeys';
+import { ER_MAX_ZOOM, ER_MIN_ZOOM, formatZoomPercent } from './erDiagramLayout';
+
+export function ErDiagramZoomBar({ disabled = false }: { disabled?: boolean }) {
+  const { t } = useTranslation();
+  const { zoom } = useViewport();
+  const { zoomIn, zoomOut, zoomTo } = useReactFlow();
+  const percent = formatZoomPercent(zoom);
+
+  return (
+    <Panel position="bottom-right">
+      <div className="pointer-events-auto flex h-8 items-center gap-1 rounded border theme-border theme-bg-popup px-1.5 text-xs theme-text-primary shadow-sm">
+        <button
+          type="button"
+          className="inline-flex h-6 w-6 items-center justify-center rounded theme-bg-hover disabled:opacity-40"
+          aria-label={t(I18N_KEYS.EXPLORER.ER_DIAGRAM_ZOOM_OUT)}
+          disabled={disabled}
+          onClick={() => { void zoomOut(); }}
+        >
+          <Minus size={14} />
+        </button>
+        <input
+          type="range"
+          className="er-zoom-range w-28"
+          min={ER_MIN_ZOOM}
+          max={ER_MAX_ZOOM}
+          step="any"
+          value={Math.min(ER_MAX_ZOOM, Math.max(ER_MIN_ZOOM, zoom))}
+          disabled={disabled}
+          aria-label={t(I18N_KEYS.EXPLORER.ER_DIAGRAM_ZOOM)}
+          aria-valuetext={percent}
+          onChange={(event) => { void zoomTo(Number(event.target.value), { duration: 0 }); }}
+        />
+        <button
+          type="button"
+          className="inline-flex h-6 w-6 items-center justify-center rounded theme-bg-hover disabled:opacity-40"
+          aria-label={t(I18N_KEYS.EXPLORER.ER_DIAGRAM_ZOOM_IN)}
+          disabled={disabled}
+          onClick={() => { void zoomIn(); }}
+        >
+          <Plus size={14} />
+        </button>
+        <button
+          type="button"
+          className="min-w-[3.25rem] rounded px-1 text-right tabular-nums theme-bg-hover disabled:opacity-40"
+          title={t(I18N_KEYS.EXPLORER.ER_DIAGRAM_ZOOM_RESET)}
+          aria-label={`${percent}, ${t(I18N_KEYS.EXPLORER.ER_DIAGRAM_ZOOM_RESET)}`}
+          disabled={disabled}
+          onClick={() => { void zoomTo(1, { duration: 0 }); }}
+        >
+          {percent}
+        </button>
+      </div>
+    </Panel>
+  );
+}

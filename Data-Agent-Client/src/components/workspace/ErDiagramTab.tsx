@@ -21,10 +21,13 @@ import { useTheme } from '../../hooks/useTheme';
 import { downloadBlob, erDiagramFilename, renderErDiagramPng } from './erDiagramExport';
 import { ErRelationEdgeView } from './ErDiagramEdge';
 import { ErTableNode, type ErTableNodeType } from './ErDiagramNode';
+import { ErDiagramZoomBar } from './ErDiagramZoomBar';
 import { buildDiagramEdges, ER_ROSE, ER_VIOLET, type ErRelationEdge } from './erDiagramEdges';
 import { ErDiagramInteractionContext, ErDiagramRectsContext } from './erDiagramInteraction';
 import {
   CARD_WIDTH,
+  ER_MAX_ZOOM,
+  ER_MIN_ZOOM,
   cardHeight,
   clearStoredLayout,
   hasStoredLayout,
@@ -685,8 +688,8 @@ function ErDiagramCanvas({ metadata }: ErDiagramTabProps) {
                   edgeTypes={edgeTypes}
                   onNodeDragStart={onNodeDragStart}
                   onNodeDragStop={onNodeDragStop}
-                  minZoom={0.08}
-                  maxZoom={1.8}
+                  minZoom={ER_MIN_ZOOM}
+                  maxZoom={ER_MAX_ZOOM}
                   deleteKeyCode={null}
                   nodesConnectable={false}
                   nodesDraggable={!layouting && !exporting}
@@ -696,6 +699,7 @@ function ErDiagramCanvas({ metadata }: ErDiagramTabProps) {
                   style={{ backgroundColor: 'var(--bg-main)' }}
                 >
                   <Background variant={BackgroundVariant.Dots} gap={18} size={1} color="var(--border-color)" />
+                  <ErDiagramZoomBar disabled={layouting || exporting} />
                 </ReactFlow>
                 {layouting && nodes.length === 0 && (
                   <div className="pointer-events-none absolute inset-0 flex items-center justify-center text-sm theme-text-secondary">

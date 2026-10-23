@@ -3,6 +3,7 @@ import type { ErRelation, ErTable } from '../../services/table.service';
 import { columnKey, tableId } from './erDiagramRelations';
 import {
   cardHeight,
+  formatZoomPercent,
   clearStoredLayout,
   hasStoredLayout,
   layoutBounds,
@@ -117,6 +118,15 @@ describe('ER diagram layout storage', () => {
     expect(readStoredLayout('er', store)).toBeNull();
     expect(readStoredLayout('bad', store)).toBeNull();
     expect(readStoredLayout('partial', store)).toEqual({});
+  });
+});
+
+describe('ER diagram zoom label', () => {
+  it('rounds the viewport zoom to a percent', () => {
+    expect(formatZoomPercent(1)).toBe('100%');
+    expect(formatZoomPercent(0.08)).toBe('8%');
+    expect(formatZoomPercent(1.8)).toBe('180%');
+    expect(formatZoomPercent(0.854)).toBe('85%');
   });
 });
 
