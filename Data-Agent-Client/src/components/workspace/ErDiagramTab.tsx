@@ -21,6 +21,7 @@ import { useTheme } from '../../hooks/useTheme';
 import { downloadBlob, erDiagramFilename, renderErDiagramPng } from './erDiagramExport';
 import { ErRelationEdgeView } from './ErDiagramEdge';
 import { ErTableNode, type ErTableNodeType } from './ErDiagramNode';
+import { ErDiagramMiniMap } from './ErDiagramMiniMap';
 import { ErDiagramZoomBar } from './ErDiagramZoomBar';
 import { buildDiagramEdges, ER_ROSE, ER_VIOLET, type ErRelationEdge } from './erDiagramEdges';
 import { ErDiagramInteractionContext, ErDiagramRectsContext } from './erDiagramInteraction';
@@ -150,6 +151,7 @@ function ErDiagramCanvas({ metadata }: ErDiagramTabProps) {
   const requestId = useRef(0);
   const framedToken = useRef(-1);
   const [layoutVersion, setLayoutVersion] = useState(0);
+  const [frameReady, setFrameReady] = useState(false);
   const storageKey = layoutStorageKey(metadata.connectionId, metadata.catalog, metadata.schema);
 
   useEffect(() => () => { requestId.current += 1; }, []);
@@ -452,6 +454,7 @@ function ErDiagramCanvas({ metadata }: ErDiagramTabProps) {
 
   useLayoutEffect(() => {
     if (layouting || nodes.length === 0 || framedToken.current === layoutVersion) return;
+    setFrameReady(false);
     let stopped = false;
     let attempts = 0;
     let frame = 0;
@@ -461,6 +464,7 @@ function ErDiagramCanvas({ metadata }: ErDiagramTabProps) {
         if (stopped || framedToken.current === layoutVersion) return;
         if (fitted) {
           framedToken.current = layoutVersion;
+          setFrameReady(true);
           return;
         }
         attempts += 1;
@@ -699,6 +703,7 @@ function ErDiagramCanvas({ metadata }: ErDiagramTabProps) {
                   style={{ backgroundColor: 'var(--bg-main)' }}
                 >
                   <Background variant={BackgroundVariant.Dots} gap={18} size={1} color="var(--border-color)" />
+                  <ErDiagramMiniMap ready={frameReady} disabled={layouting || exporting} />
                   <ErDiagramZoomBar disabled={layouting || exporting} />
                 </ReactFlow>
                 {layouting && nodes.length === 0 && (

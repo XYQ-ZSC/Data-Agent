@@ -281,6 +281,7 @@ export const I18N_KEYS = {
     ER_DIAGRAM_ZOOM_IN: 'explorer.er_diagram_zoom_in',
     ER_DIAGRAM_ZOOM_OUT: 'explorer.er_diagram_zoom_out',
     ER_DIAGRAM_ZOOM_RESET: 'explorer.er_diagram_zoom_reset',
+    ER_DIAGRAM_MINIMAP: 'explorer.er_diagram_minimap',
     VIEW_DATA: 'explorer.view_data',
     TABLE_DATA: 'explorer.table_data',
     VIEW_DATA_TITLE: 'explorer.view_data_title',

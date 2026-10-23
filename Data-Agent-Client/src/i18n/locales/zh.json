@@ -498,6 +498,7 @@
     "er_diagram_zoom_in": "放大",
     "er_diagram_zoom_out": "缩小",
     "er_diagram_zoom_reset": "重置为 100%",
+    "er_diagram_minimap": "表位置",
     "view_ddl": "查看 DDL",
     "view_ddl_title": "视图 DDL",
     "view_data": "查看数据",

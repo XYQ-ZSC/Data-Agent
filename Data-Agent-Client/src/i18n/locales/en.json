@@ -498,6 +498,7 @@
     "er_diagram_zoom_in": "Zoom in",
     "er_diagram_zoom_out": "Zoom out",
     "er_diagram_zoom_reset": "Reset to 100%",
+    "er_diagram_minimap": "Table map",
     "view_ddl": "View DDL",
     "view_ddl_title": "View DDL",
     "view_data": "View Data",

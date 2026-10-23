@@ -112,9 +112,50 @@ const VIEW_PADDING = 32;
 
 export const ER_MIN_ZOOM = 0.08;
 export const ER_MAX_ZOOM = 1.8;
+export const ER_MINIMAP_WIDTH = 220;
+export const ER_MINIMAP_HEIGHT = 132;
+export const ER_ZOOM_BAR_HEIGHT = 32;
+export const ER_OVERVIEW_GAP = 8;
+/** Matches the margin on `.react-flow__panel`. */
+export const ER_PANEL_MARGIN = 15;
+/** Content may poke out this far before the minimap appears. */
+export const ER_MINIMAP_SHOW_SLACK = 12;
+/** Once shown, the minimap stays until every table is back inside this margin. */
+export const ER_MINIMAP_HIDE_SLACK = 4;
 
 export function formatZoomPercent(zoom: number) {
   return `${Math.round(zoom * 100)}%`;
+}
+
+export function viewportShowsAllTables(
+  nodes: Array<{ x: number; y: number; width: number; height: number }>,
+  viewport: { x: number; y: number; zoom: number },
+  paneWidth: number,
+  paneHeight: number,
+  slack = ER_MINIMAP_SHOW_SLACK,
+) {
+  if (nodes.length === 0 || paneWidth <= 0 || paneHeight <= 0 || viewport.zoom <= 0) return true;
+  return nodes.every((node) => {
+    const left = viewport.x + node.x * viewport.zoom;
+    const top = viewport.y + node.y * viewport.zoom;
+    const right = left + node.width * viewport.zoom;
+    const bottom = top + node.height * viewport.zoom;
+    return left >= -slack
+      && top >= -slack
+      && right <= paneWidth + slack
+      && bottom <= paneHeight + slack;
+  });
+}
+
+export function minimapNeeded(
+  currentlyVisible: boolean,
+  nodes: Array<{ x: number; y: number; width: number; height: number }>,
+  viewport: { x: number; y: number; zoom: number },
+  paneWidth: number,
+  paneHeight: number,
+) {
+  const slack = currentlyVisible ? ER_MINIMAP_HIDE_SLACK : ER_MINIMAP_SHOW_SLACK;
+  return !viewportShowsAllTables(nodes, viewport, paneWidth, paneHeight, slack);
 }
 
 /** Moves the whole diagram so its top-left sits on a fixed origin. */

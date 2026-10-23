@@ -1032,3 +1032,15 @@
 .er-zoom-range:disabled {
   cursor: default;
 }
+
+.er-diagram-flow .er-diagram-minimap {
+  overflow: hidden;
+}
+
+.er-diagram-flow .er-diagram-minimap .react-flow__minimap-svg {
+  cursor: grab;
+}
+
+.er-diagram-flow .er-diagram-minimap .react-flow__minimap-svg:active {
+  cursor: grabbing;
+}

@@ -2,7 +2,7 @@ import { Panel, useReactFlow, useViewport } from '@xyflow/react';
 import { Minus, Plus } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { I18N_KEYS } from '../../constants/i18nKeys';
-import { ER_MAX_ZOOM, ER_MIN_ZOOM, formatZoomPercent } from './erDiagramLayout';
+import { ER_MAX_ZOOM, ER_MINIMAP_WIDTH, ER_MIN_ZOOM, ER_ZOOM_BAR_HEIGHT, formatZoomPercent } from './erDiagramLayout';
 
 export function ErDiagramZoomBar({ disabled = false }: { disabled?: boolean }) {
   const { t } = useTranslation();
@@ -12,7 +12,10 @@ export function ErDiagramZoomBar({ disabled = false }: { disabled?: boolean }) {
 
   return (
     <Panel position="bottom-right">
-      <div className="pointer-events-auto flex h-8 items-center gap-1 rounded border theme-border theme-bg-popup px-1.5 text-xs theme-text-primary shadow-sm">
+      <div
+        className="pointer-events-auto flex items-center gap-1 rounded border theme-border theme-bg-popup px-1.5 text-xs theme-text-primary shadow-sm"
+        style={{ width: ER_MINIMAP_WIDTH, height: ER_ZOOM_BAR_HEIGHT }}
+      >
         <button
           type="button"
           className="inline-flex h-6 w-6 items-center justify-center rounded theme-bg-hover disabled:opacity-40"
@@ -24,7 +27,7 @@ export function ErDiagramZoomBar({ disabled = false }: { disabled?: boolean }) {
         </button>
         <input
           type="range"
-          className="er-zoom-range w-28"
+          className="er-zoom-range min-w-0 flex-1"
           min={ER_MIN_ZOOM}
           max={ER_MAX_ZOOM}
           step="any"
