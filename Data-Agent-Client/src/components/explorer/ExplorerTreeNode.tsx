@@ -18,6 +18,7 @@ import { Button } from '../ui/Button';
 import { ExplorerNodeIcon } from './ExplorerNodeIcon';
 import { ExplorerNodeType, ExplorerIdPrefix } from '../../constants/explorer';
 import type { ExplorerNode } from '../../types/explorer';
+import type { ObjectScriptKind } from '../../utils/sqlGenerator';
 import { NodeContextMenuContent } from './NodeContextMenuContent';
 import type { ExplorerNodeHydrationState } from '../../hooks/useConnectionTree';
 
@@ -37,6 +38,9 @@ export interface ExplorerTreeNodeProps {
   onRename: (node: ExplorerNode) => void;
   onDelete: (node: ExplorerNode, type: ExplorerNodeType) => void;
   onOpenQueryConsole: (node: ExplorerNode) => void;
+  onSqlScript: (node: ExplorerNode, kind: ObjectScriptKind) => void;
+  onRunSqlScript: (node: ExplorerNode) => void;
+  onSqlGenerator: (node: ExplorerNode) => void;
   onCreateTable: (node: ExplorerNode) => void;
   onImportData: (node: ExplorerNode) => void;
   onExportData: (node: ExplorerNode) => void;
@@ -61,6 +65,9 @@ export function ExplorerTreeNode({
   onRename,
   onDelete,
   onOpenQueryConsole,
+  onSqlScript,
+  onRunSqlScript,
+  onSqlGenerator,
   onCreateTable,
   onImportData,
   onExportData,
@@ -238,6 +245,9 @@ export function ExplorerTreeNode({
           node={node.data}
           isConnected={isConnected}
           onOpenQueryConsole={onOpenQueryConsole}
+          onSqlScript={onSqlScript}
+          onRunSqlScript={onRunSqlScript}
+          onSqlGenerator={onSqlGenerator}
           onCreateTable={onCreateTable}
           onOpenErDiagram={onOpenErDiagram}
           onViewDdl={onViewDdl}

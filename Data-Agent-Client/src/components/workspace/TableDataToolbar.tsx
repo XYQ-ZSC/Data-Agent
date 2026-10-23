@@ -1,4 +1,4 @@
-import { Play, Plus, Minus, FileText, ChevronDown, ChevronUp, RefreshCcw, Search, X, ArrowUp } from 'lucide-react';
+import { Play, Plus, Minus, FileText, ChevronDown, ChevronUp, RefreshCcw, Search, X, ArrowUp, Wand2 } from 'lucide-react';
 import type { Ref } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Button } from '../ui/Button';
@@ -35,6 +35,7 @@ interface TableDataToolbarProps {
   onAddRow: () => void;
   onDeleteRow: () => void;
   onOpenDdl: () => void;
+  onOpenSqlGenerator: () => void;
   onDatabaseChange: (db: string) => void;
   onViewModeChange: (mode: 'grid' | 'transpose') => void;
   findVisible: boolean;
@@ -72,6 +73,7 @@ export function TableDataToolbar({
   onAddRow,
   onDeleteRow,
   onOpenDdl,
+  onOpenSqlGenerator,
   onDatabaseChange,
   onViewModeChange,
   findVisible,
@@ -171,6 +173,17 @@ export function TableDataToolbar({
       >
         <FileText className="w-3.5 h-3.5 theme-text-secondary" />
         DDL
+      </Button>
+      <Button
+        variant="ghost"
+        size="sm"
+        className="h-6 px-2 gap-1 text-[11px]"
+        onClick={onOpenSqlGenerator}
+        disabled={!hasRowSelection || isTransposeMode}
+        title={t(I18N_KEYS.EXPLORER.SQL_GENERATOR)}
+      >
+        <Wand2 className="w-3.5 h-3.5 theme-text-secondary" />
+        {t(I18N_KEYS.EXPLORER.SQL_GENERATOR)}
       </Button>
       <div className="w-px h-4 bg-border mx-0.5" />
       <Button

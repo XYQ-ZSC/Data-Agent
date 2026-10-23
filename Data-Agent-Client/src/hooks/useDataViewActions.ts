@@ -8,6 +8,8 @@ import { procedureService } from '../services/procedure.service';
 import { triggerService } from '../services/trigger.service';
 import { sequenceService } from '../services/sequence.service';
 import { constraintService } from '../services/constraint.service';
+import { columnService } from '../services/column.service';
+import { generateObjectScript, resolveProfile, type ObjectScriptKind } from '../utils/sqlGenerator';
 import { useWorkspaceStore } from '../store/workspaceStore';
 import { TableDblClickConsoleTargetEnum, TableDblClickModeEnum } from '../constants/workspacePreferences';
 import { I18N_KEYS } from '../constants/i18nKeys';
@@ -304,6 +306,49 @@ export function useDataViewActions({
     ensureConsoleTab(node, { forceNew: true });
   }, [ensureConsoleTab]);
 
+  const handleSqlScript = useCallback(
+    async (node: ExplorerNode, kind: ObjectScriptKind) => {
+      const consoleContext = ensureConsoleTab(node);
+      if (!consoleContext) return;
+
+      const objectName = node.tableName || node.objectName || node.name;
+      const profile = resolveProfile(
+        consoleContext.dbType,
+        consoleContext.dbTypeConfig?.identifierQuoteStyle,
+      );
+
+      let columns: string[] = [];
+      if (kind === 'INSERT' || kind === 'UPDATE') {
+        try {
+          const cols = await columnService.listColumns(
+            String(consoleContext.connectionId),
+            objectName,
+            node.catalog || undefined,
+            node.schema || undefined,
+          );
+          columns = (cols ?? []).map((col) => col.name);
+        } catch {
+          columns = [];
+        }
+      }
+
+      const sql = generateObjectScript(
+        {
+          kind,
+          table: { catalog: node.catalog, schema: node.schema, name: objectName },
+          columns,
+          objectType: node.type === ExplorerNodeType.VIEW ? 'view' : 'table',
+        },
+        profile,
+      );
+
+      const existingContent = tabs.find((tab) => tab.id === consoleContext.tabId)?.content ?? '';
+      updateTabContent(consoleContext.tabId, appendSql(existingContent, sql));
+      switchTab(consoleContext.tabId);
+    },
+    [ensureConsoleTab, switchTab, tabs, updateTabContent],
+  );
+
   const getDdlConfig = useCallback(() => {
     if (!selectedDdlNode?.connectionId) return null;
     const node = selectedDdlNode;
@@ -395,8 +440,10 @@ export function useDataViewActions({
     handleViewData,
     handleTableOrViewDoubleClick,
     handleOpenQueryConsole,
+    handleSqlScript,
     handleCreateTable,
     handleOpenErDiagram,
     getDdlConfig,
+    resolveConsoleContext,
   };
 }

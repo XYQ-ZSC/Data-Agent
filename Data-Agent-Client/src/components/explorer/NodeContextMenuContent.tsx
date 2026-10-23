@@ -1,4 +1,4 @@
-import { Download, FileText, Pencil, Plus, Table, Table2, Trash2, Upload, Waypoints } from 'lucide-react';
+import { Download, FileCode2, FileText, Pencil, Play, Plus, Table, Table2, Trash2, Upload, Waypoints } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import {
   ContextMenuContent,
@@ -10,12 +10,16 @@ import {
 } from '../ui/ContextMenu';
 import { ExplorerNodeType } from '../../constants/explorer';
 import type { ExplorerNode } from '../../types/explorer';
+import type { ObjectScriptKind } from '../../utils/sqlGenerator';
 import { I18N_KEYS } from '../../constants/i18nKeys';
 
 interface NodeContextMenuContentProps {
   node: ExplorerNode;
   isConnected: boolean;
   onOpenQueryConsole: (node: ExplorerNode) => void;
+  onSqlScript: (node: ExplorerNode, kind: ObjectScriptKind) => void;
+  onRunSqlScript: (node: ExplorerNode) => void;
+  onSqlGenerator: (node: ExplorerNode) => void;
   onCreateTable: (node: ExplorerNode) => void;
   onOpenErDiagram: (node: ExplorerNode) => void;
   onViewDdl: (node: ExplorerNode) => void;
@@ -32,6 +36,9 @@ export function NodeContextMenuContent({
   node,
   isConnected,
   onOpenQueryConsole,
+  onSqlScript,
+  onRunSqlScript,
+  onSqlGenerator,
   onCreateTable,
   onOpenErDiagram,
   onViewDdl,
@@ -63,6 +70,8 @@ export function NodeContextMenuContent({
     node.type === ExplorerNodeType.KEY;
 
   const isDb = node.type === ExplorerNodeType.DB;
+
+  const isSchema = node.type === ExplorerNodeType.SCHEMA;
 
   const isDeletableFolder =
     node.type === ExplorerNodeType.FOLDER &&
@@ -165,6 +174,47 @@ export function NodeContextMenuContent({
         </>
       )}
       {isTableOrView || isColumnOrIndexOrKey ? (hasDataOperations = true) : null}
+
+      {/* 3.2 SQL Scripts - run a .sql script file against this database/schema/tables folder */}
+      {isConnected && (isDb || isSchema || isTablesFolder) && (
+        <ContextMenuSub>
+          <ContextMenuSubTrigger>
+            <FileCode2 className="w-3.5 h-3.5 mr-2" />
+            {t(I18N_KEYS.EXPLORER.SQL_SCRIPTS)}
+          </ContextMenuSubTrigger>
+          <ContextMenuSubContent>
+            <ContextMenuItem onSelect={() => onRunSqlScript(node)}>
+              <Play className="w-3.5 h-3.5 mr-2" />
+              {t(I18N_KEYS.EXPLORER.RUN_SQL_SCRIPT)}
+            </ContextMenuItem>
+            <ContextMenuItem onSelect={() => onSqlGenerator(node)}>
+              <FileCode2 className="w-3.5 h-3.5 mr-2" />
+              {t(I18N_KEYS.EXPLORER.SQL_GENERATOR)}
+            </ContextMenuItem>
+          </ContextMenuSubContent>
+        </ContextMenuSub>
+      )}
+
+      {/* 3.25 SQL Scripts - generate DML/DDL statement skeletons */}
+      {isConnected && isTableOrView && (
+        <ContextMenuSub>
+          <ContextMenuSubTrigger>
+            <FileCode2 className="w-3.5 h-3.5 mr-2" />
+            {t(I18N_KEYS.EXPLORER.SQL_SCRIPTS)}
+          </ContextMenuSubTrigger>
+          <ContextMenuSubContent>
+            <ContextMenuItem onSelect={() => onSqlScript(node, 'SELECT')}>SELECT</ContextMenuItem>
+            {node.type === ExplorerNodeType.TABLE && (
+              <>
+                <ContextMenuItem onSelect={() => onSqlScript(node, 'INSERT')}>INSERT</ContextMenuItem>
+                <ContextMenuItem onSelect={() => onSqlScript(node, 'UPDATE')}>UPDATE</ContextMenuItem>
+                <ContextMenuItem onSelect={() => onSqlScript(node, 'DELETE')}>DELETE</ContextMenuItem>
+              </>
+            )}
+            <ContextMenuItem onSelect={() => onSqlScript(node, 'DROP')}>DROP</ContextMenuItem>
+          </ContextMenuSubContent>
+        </ContextMenuSub>
+      )}
 
       {/* 3.5 Import/Export Data - for tables (UI placeholder, functionality to be implemented later) */}
       {node.type === ExplorerNodeType.TABLE && (

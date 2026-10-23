@@ -17,6 +17,7 @@ import { sqlAnalysisService } from "../services/sqlAnalysis.service";
 import { connectionService } from "../services/connection.service";
 import { getSqlDialectByDbType } from "../constants/sqlDialect";
 import { formatSql } from "../utils/sql";
+import { containsNonAtomicStatement } from "../utils/sqlRunner";
 import { extractSqlVariables, substituteSqlVariables, type SqlVariable } from "../utils/sqlVariables";
 import { SqlParameterDialog } from "../components/editor/SqlParameterDialog";
 import { I18N_KEYS } from "../constants/i18nKeys";
@@ -106,13 +107,20 @@ export default function Home() {
         setScriptResults([]);
         setIsResultsVisible(true);
 
+        // ATOMIC mode only accepts queries and transactional DML; DDL (e.g. the
+        // generated DROP/CREATE/ALTER scripts) is rejected server-side. Auto-switch
+        // to STEPWISE for those scripts so they run instead of failing.
+        const effectiveMode: SqlBatchMode =
+            scriptMode === 'ATOMIC' && containsNonAtomicStatement(sql) ? 'STEPWISE' : scriptMode;
+        if (effectiveMode !== scriptMode) setScriptMode(effectiveMode);
+
         try {
             const results = await sqlExecutionService.executeScript({
                 connectionId: sqlContext.connectionId,
                 databaseName: sqlContext.databaseName ?? undefined,
                 schemaName: sqlContext.schemaName ?? undefined,
                 sql,
-                mode: scriptMode,
+                mode: effectiveMode,
                 timeoutMs: timeoutSeconds * 1000,
                 maxRows,
                 executionId,
@@ -164,10 +172,9 @@ export default function Home() {
         }
     }, [connectionType, sqlContext, scriptMode, timeoutSeconds, maxRows]);
 
-    const handleRunQuery = useCallback(() => {
+    const runSqlFromEditor = useCallback((getSql: () => string) => {
         if (pendingParameters) return;
-        const sql = editorRef.current?.getSelectionOrAllContent().trim()
-                    ?? activeTab?.content?.trim() ?? '';
+        const sql = getSql().trim();
         if (!sql || !sqlContext?.connectionId) return;
 
         const mysql = connectionType?.dbType.toUpperCase() !== 'DM';
@@ -177,7 +184,19 @@ export default function Home() {
             return;
         }
         void executeSqlText(sql);
-    }, [activeTab, connectionType, executeSqlText, pendingParameters, sqlContext?.connectionId]);
+    }, [connectionType, executeSqlText, pendingParameters, sqlContext?.connectionId]);
+
+    // Toolbar "Run": execute the whole script, or the selection when one is active.
+    const handleRunQuery = useCallback(() => {
+        runSqlFromEditor(() =>
+            editorRef.current?.getSelectionOrAllContent() ?? activeTab?.content ?? '');
+    }, [runSqlFromEditor, activeTab?.content]);
+
+    // Ctrl/Cmd+Enter: execute the statement under the cursor, or the selection.
+    const handleRunStatement = useCallback(() => {
+        runSqlFromEditor(() =>
+            editorRef.current?.getSelectionOrStatement() ?? activeTab?.content ?? '');
+    }, [runSqlFromEditor, activeTab?.content]);
 
     const handleStop = useCallback(async () => {
         if (!executionIdRef.current || !sqlContext?.connectionId) return;
@@ -201,13 +220,13 @@ export default function Home() {
         const handleKeyDown = (e: KeyboardEvent) => {
             if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
                 e.preventDefault();
-                handleRunQuery();
+                handleRunStatement();
             }
         };
 
         window.addEventListener('keydown', handleKeyDown);
         return () => window.removeEventListener('keydown', handleKeyDown);
-    }, [handleRunQuery]);
+    }, [handleRunStatement]);
 
     return (
         <div className="flex-1 min-w-0 h-full overflow-hidden flex flex-col">

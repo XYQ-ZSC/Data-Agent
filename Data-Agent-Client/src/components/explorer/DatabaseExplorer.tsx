@@ -26,6 +26,9 @@ import { BatchImportDialog } from './BatchImportDialog';
 import type { BatchImportParams } from './BatchImportDialog';
 import { ImportDataDialog } from './ImportDataDialog';
 import type { ImportDataParams } from './ImportDataDialog';
+import { RunSqlScriptDialog } from './RunSqlScriptDialog';
+import type { SqlScriptTarget } from './RunSqlScriptDialog';
+import { SchemaDdlGeneratorDialog } from './SchemaDdlGeneratorDialog';
 
 export function DatabaseExplorer() {
   const { t } = useTranslation();
@@ -116,7 +119,7 @@ export function DatabaseExplorer() {
   });
 
   // Data view actions
-  const { handleViewDdl, handleViewData, handleTableOrViewDoubleClick, handleOpenQueryConsole, handleCreateTable, handleOpenErDiagram, getDdlConfig } = useDataViewActions({
+  const { handleViewDdl, handleViewData, handleTableOrViewDoubleClick, handleOpenQueryConsole, handleSqlScript, handleCreateTable, handleOpenErDiagram, getDdlConfig, resolveConsoleContext } = useDataViewActions({
     setSelectedDdlNode,
     setDdlDialogOpen,
     setTableDataDialogOpen,
@@ -213,6 +216,43 @@ export function DatabaseExplorer() {
     setImportDialogOpen(true);
   };
 
+  // SQL script (right-click a database/schema node): run a .sql file, or generate DDL.
+  const [runSqlScriptOpen, setRunSqlScriptOpen] = useState(false);
+  const [sqlGeneratorOpen, setSqlGeneratorOpen] = useState(false);
+  const [sqlScriptTarget, setSqlScriptTarget] = useState<SqlScriptTarget | null>(null);
+
+  const buildSqlScriptTarget = (node: ExplorerNode): SqlScriptTarget | null => {
+    const context = resolveConsoleContext(node);
+    if (!context) return null;
+    const conn = node.dbConnection ?? connections.find((c) => c.id === context.connectionId);
+    const targetPath = [`@${conn?.host ?? ''}`, context.databaseName, context.schemaName]
+      .filter(Boolean).join('/');
+    const scope = node.type === ExplorerNodeType.FOLDER && node.folderName === FolderName.TABLES
+      ? 'tables' : 'all';
+    return {
+      connectionId: context.connectionId,
+      connectionName: context.connectionName,
+      databaseName: context.databaseName,
+      schemaName: context.schemaName,
+      targetPath,
+      scope,
+    };
+  };
+
+  const handleRunSqlScript = (node: ExplorerNode) => {
+    const target = buildSqlScriptTarget(node);
+    if (!target) return;
+    setSqlScriptTarget(target);
+    setRunSqlScriptOpen(true);
+  };
+
+  const handleSqlGenerator = (node: ExplorerNode) => {
+    const target = buildSqlScriptTarget(node);
+    if (!target) return;
+    setSqlScriptTarget(target);
+    setSqlGeneratorOpen(true);
+  };
+
   useEffect(() => {
     if (!accessToken) return;
     fetchSupportedDbTypes();
@@ -302,6 +342,9 @@ export function DatabaseExplorer() {
           onRename={handleRename}
           onDelete={handleDelete}
           onOpenQueryConsole={handleOpenQueryConsole}
+          onSqlScript={handleSqlScript}
+          onRunSqlScript={handleRunSqlScript}
+          onSqlGenerator={handleSqlGenerator}
           onCreateTable={handleCreateTable}
           onImportData={handleImportData}
           onExportData={handleExportData}
@@ -379,6 +422,18 @@ export function DatabaseExplorer() {
         onOpenChange={setImportDialogOpen}
         targetTablePath={importTargetPath}
         importParams={importParams}
+      />
+
+      <RunSqlScriptDialog
+        open={runSqlScriptOpen}
+        onOpenChange={setRunSqlScriptOpen}
+        target={sqlScriptTarget}
+      />
+
+      <SchemaDdlGeneratorDialog
+        open={sqlGeneratorOpen}
+        onOpenChange={setSqlGeneratorOpen}
+        target={sqlScriptTarget}
       />
     </div>
   );

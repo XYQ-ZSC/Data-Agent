@@ -6,6 +6,7 @@ import { sqlCompletionService } from '../../services/sqlCompletion.service';
 import { useTheme } from '../../hooks/useTheme';
 import { useAuthStore } from '../../store/authStore';
 import { EXPLORER_SQL_OBJECT_CHANGED } from '../../constants/explorer';
+import { statementSpanAtOffset } from '../../utils/sqlRunner';
 import { SqlCompletionSession, staticCompletions, completionSortText } from './completion/sqlCompletion';
 import { SqlCompletionDictionary } from './completion/sqlCompletionDictionary';
 import './MonacoEditor.css';
@@ -18,6 +19,12 @@ export interface MonacoEditorHandle {
    * Returns the selected text if selection exists, otherwise returns full editor content
    */
   getSelectionOrAllContent(): string;
+
+  /**
+   * Returns the selected text if a selection exists; otherwise the statement under
+   * the cursor; falls back to full content when no statement is under the cursor.
+   */
+  getSelectionOrStatement(): string;
 
   /**
    * Programmatically set editor content
@@ -288,6 +295,23 @@ export const MonacoEditor = forwardRef<MonacoEditorHandle, MonacoEditorProps>(
           return editor.getModel()?.getValueInRange(selection) ?? '';
         }
         return editor.getValue();
+      },
+      getSelectionOrStatement(): string {
+        const editor = editorRef.current;
+        if (!editor) return '';
+        const model = editor.getModel();
+        if (!model) return '';
+        const selection = editor.getSelection();
+        if (selection && !selection.isEmpty()) {
+          return model.getValueInRange(selection) ?? '';
+        }
+        const value = model.getValue();
+        const position = editor.getPosition();
+        if (position) {
+          const span = statementSpanAtOffset(value, model.getOffsetAt(position));
+          if (span) return span.sql;
+        }
+        return value;
       },
       setValue(newValue: string): void {
         if (editorRef.current) {

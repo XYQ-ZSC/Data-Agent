@@ -6,6 +6,7 @@ import { I18N_KEYS } from '../../constants/i18nKeys';
 import { ExplorerTreeNode } from './ExplorerTreeNode';
 import type { ExplorerNode } from '../../types/explorer';
 import type { ExplorerNodeHydrationState } from '../../hooks/useConnectionTree';
+import type { ObjectScriptKind } from '../../utils/sqlGenerator';
 
 interface ExplorerTreeProps {
   data: ExplorerNode[];
@@ -23,6 +24,9 @@ interface ExplorerTreeProps {
   onRename: (node: ExplorerNode) => void;
   onDelete: (node: ExplorerNode, type: ExplorerNodeType) => void;
   onOpenQueryConsole: (node: ExplorerNode) => void;
+  onSqlScript: (node: ExplorerNode, kind: ObjectScriptKind) => void;
+  onRunSqlScript: (node: ExplorerNode) => void;
+  onSqlGenerator: (node: ExplorerNode) => void;
   onCreateTable: (node: ExplorerNode) => void;
   onImportData: (node: ExplorerNode) => void;
   onExportData: (node: ExplorerNode) => void;
@@ -98,6 +102,9 @@ export const ExplorerTree = forwardRef<ExplorerTreeHandle, ExplorerTreeProps>(fu
   onRename,
   onDelete,
   onOpenQueryConsole,
+  onSqlScript,
+  onRunSqlScript,
+  onSqlGenerator,
   onCreateTable,
   onImportData,
   onExportData,
@@ -190,6 +197,9 @@ export const ExplorerTree = forwardRef<ExplorerTreeHandle, ExplorerTreeProps>(fu
         onRename={onRename}
         onDelete={onDelete}
         onOpenQueryConsole={onOpenQueryConsole}
+        onSqlScript={onSqlScript}
+        onRunSqlScript={onRunSqlScript}
+        onSqlGenerator={onSqlGenerator}
         onCreateTable={onCreateTable}
         onImportData={onImportData}
         onExportData={onExportData}
