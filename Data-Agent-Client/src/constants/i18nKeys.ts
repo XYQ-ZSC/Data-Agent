@@ -49,6 +49,16 @@ export const I18N_KEYS = {
     CONFIRM: 'common.confirm',
   },
 
+  // Script parameter dialog keys
+  SQL_PARAMETER: {
+    TITLE: 'sqlParameter.title',
+    DESCRIPTION: 'sqlParameter.description',
+    OCCURRENCES: 'sqlParameter.occurrences',
+    PLACEHOLDER: 'sqlParameter.placeholder',
+    CONFIRM: 'sqlParameter.confirm',
+    CANCEL: 'sqlParameter.cancel',
+  },
+
   // Auth keys
   AUTH: {
     LOGIN: 'auth.login',

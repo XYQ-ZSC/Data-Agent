@@ -17,8 +17,12 @@ import { sqlAnalysisService } from "../services/sqlAnalysis.service";
 import { connectionService } from "../services/connection.service";
 import { getSqlDialectByDbType } from "../constants/sqlDialect";
 import { formatSql } from "../utils/sql";
+import { extractSqlVariables, substituteSqlVariables, type SqlVariable } from "../utils/sqlVariables";
+import { SqlParameterDialog } from "../components/editor/SqlParameterDialog";
 import { I18N_KEYS } from "../constants/i18nKeys";
 import { EXPLORER_SQL_OBJECT_CHANGED } from "../constants/explorer";
+
+const NO_VARIABLES: SqlVariable[] = [];
 
 export default function Home() {
     const { t } = useTranslation();
@@ -35,6 +39,11 @@ export default function Home() {
     const [isRunning, setIsRunning] = useState(false);
     const [connectionType, setConnectionType] = useState<{ id: number; dbType: string } | null>(null);
     const [diagnostics, setDiagnostics] = useState<SqlSyntaxError[]>([]);
+    const [pendingParameters, setPendingParameters] = useState<{
+        sql: string;
+        variables: SqlVariable[];
+        mysql: boolean;
+    } | null>(null);
 
     const activeTab = tabs.find(t => t.id === activeTabId);
     const isSpecialTab = activeTab?.type === 'plan' || activeTab?.type === 'subagent-console' || activeTab?.type === 'er';
@@ -86,9 +95,7 @@ export default function Home() {
         if (formatted !== original) updateTabContent(activeTab.id, formatted);
     }, [activeTab, connectionType, sqlContext?.connectionId, updateTabContent]);
 
-    const handleRunQuery = useCallback(async () => {
-        const sql = editorRef.current?.getSelectionOrAllContent().trim()
-                    ?? activeTab?.content?.trim() ?? '';
+    const executeSqlText = useCallback(async (sql: string) => {
         if (!sql || !sqlContext?.connectionId) return;
 
         setIsRunning(true);
@@ -155,7 +162,22 @@ export default function Home() {
             executionIdRef.current = null;
             setIsRunning(false);
         }
-    }, [activeTab, connectionType, sqlContext, scriptMode, timeoutSeconds, maxRows]);
+    }, [connectionType, sqlContext, scriptMode, timeoutSeconds, maxRows]);
+
+    const handleRunQuery = useCallback(() => {
+        if (pendingParameters) return;
+        const sql = editorRef.current?.getSelectionOrAllContent().trim()
+                    ?? activeTab?.content?.trim() ?? '';
+        if (!sql || !sqlContext?.connectionId) return;
+
+        const mysql = connectionType?.dbType.toUpperCase() !== 'DM';
+        const variables = extractSqlVariables(sql, mysql);
+        if (variables.length > 0) {
+            setPendingParameters({ sql, variables, mysql });
+            return;
+        }
+        void executeSqlText(sql);
+    }, [activeTab, connectionType, executeSqlText, pendingParameters, sqlContext?.connectionId]);
 
     const handleStop = useCallback(async () => {
         if (!executionIdRef.current || !sqlContext?.connectionId) return;
@@ -272,6 +294,19 @@ export default function Home() {
                     </div>
                 </ResultsPanel>
             )}
+
+            <SqlParameterDialog
+                open={pendingParameters !== null}
+                variables={pendingParameters?.variables ?? NO_VARIABLES}
+                onCancel={() => setPendingParameters(null)}
+                onSubmit={(values) => {
+                    const pending = pendingParameters;
+                    setPendingParameters(null);
+                    if (pending) {
+                        void executeSqlText(substituteSqlVariables(pending.sql, values, pending.mysql));
+                    }
+                }}
+            />
         </div>
     );
 }

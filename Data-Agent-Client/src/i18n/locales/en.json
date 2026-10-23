@@ -49,6 +49,14 @@
     "workspace_role_admin": "Admin",
     "workspace_role_member": "Member"
   },
+  "sqlParameter": {
+    "title": "Enter parameter values",
+    "description": "The script contains {{count}} parameter(s). Fill in the values before executing.",
+    "occurrences": "{{count}} occurrence(s)",
+    "placeholder": "Enter a value for {{name}}",
+    "confirm": "Execute",
+    "cancel": "Cancel"
+  },
   "settingsPage": {
     "title": "Settings",
     "subtitle": "Manage your account settings and preferences",

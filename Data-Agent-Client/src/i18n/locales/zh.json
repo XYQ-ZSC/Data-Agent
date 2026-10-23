@@ -49,6 +49,14 @@
     "workspace_role_admin": "管理员",
     "workspace_role_member": "成员"
   },
+  "sqlParameter": {
+    "title": "请输入参数值",
+    "description": "当前脚本包含 {{count}} 个参数，填写后执行。",
+    "occurrences": "出现 {{count}} 次",
+    "placeholder": "请输入 {{name}} 的值",
+    "confirm": "执行",
+    "cancel": "取消"
+  },
   "settingsPage": {
     "title": "设置",
     "subtitle": "管理账户设置与偏好",
