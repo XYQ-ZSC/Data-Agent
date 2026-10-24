@@ -1,6 +1,6 @@
 import { useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
-import { ExplorerNodeType } from '../constants/explorer';
+import { ExplorerNodeType, FolderName, INDEX_UNIQUE_SUFFIX } from '../constants/explorer';
 import { tableService } from '../services/table.service';
 import { viewService } from '../services/view.service';
 import { functionService } from '../services/function.service';
@@ -8,8 +8,7 @@ import { procedureService } from '../services/procedure.service';
 import { triggerService } from '../services/trigger.service';
 import { sequenceService } from '../services/sequence.service';
 import { constraintService } from '../services/constraint.service';
-import { columnService } from '../services/column.service';
-import { generateObjectScript, resolveProfile, type ObjectScriptKind } from '../utils/sqlGenerator';
+import { indexService } from '../services/index.service';
 import { useWorkspaceStore } from '../store/workspaceStore';
 import { TableDblClickConsoleTargetEnum, TableDblClickModeEnum } from '../constants/workspacePreferences';
 import { I18N_KEYS } from '../constants/i18nKeys';
@@ -233,6 +232,52 @@ export function useDataViewActions({
     [ensureConsoleTab, updateTabContent, t]
   );
 
+  // Indexes have no backend DDL endpoint, so build CREATE INDEX statements from
+  // listIndexes metadata (skipping primary-key indexes, which live in the table DDL).
+  const handleGenerateIndexes = useCallback(
+    async (node: ExplorerNode) => {
+      const consoleContext = ensureConsoleTab(node);
+      if (!consoleContext || !node.tableName) return;
+
+      const catalog = node.catalog ?? '';
+      const schema = node.schema ?? '';
+      const quoteStyle = consoleContext.dbTypeConfig?.identifierQuoteStyle ?? 'double_quote';
+      const quote = (name: string) => quoteIdentifier(name, quoteStyle);
+
+      try {
+        const indexes = await indexService.listIndexes(
+          String(consoleContext.connectionId),
+          node.tableName,
+          catalog,
+          schema,
+        );
+        const isFolder = node.type === ExplorerNodeType.FOLDER && node.folderName === FolderName.INDEXES;
+
+        const ddl = indexes
+          .filter((idx) => {
+            if (idx.isPrimaryKey) return false;
+            if (isFolder) return true;
+            const colList = idx.columns?.length ? idx.columns.join(', ') : '';
+            const displayName = (colList ? `${idx.name} (${colList})` : idx.name)
+              + (idx.unique ? INDEX_UNIQUE_SUFFIX : '');
+            return displayName === node.name;
+          })
+          .map((idx) => {
+            const cols = (idx.columns ?? []).map(quote).join(', ');
+            const unique = idx.unique ? 'UNIQUE ' : '';
+            return `CREATE ${unique}INDEX ${quote(idx.name)} ON ${quote(node.tableName!)} (${cols});`;
+          })
+          .join('\n\n');
+
+        updateTabContent(consoleContext.tabId, ddl || `-- No indexes to generate for ${node.tableName}\n`);
+      } catch (err) {
+        const errMsg = (err as Error).message || t(I18N_KEYS.EXPLORER.LOAD_DDL_FAILED);
+        updateTabContent(consoleContext.tabId, `-- ${errMsg}\n`);
+      }
+    },
+    [ensureConsoleTab, updateTabContent, t],
+  );
+
   const handleViewData = useCallback(
     (node: ExplorerNode, highlightCol?: string) => {
       if (!node.connectionId) return;
@@ -305,49 +350,6 @@ export function useDataViewActions({
   const handleOpenQueryConsole = useCallback((node: ExplorerNode) => {
     ensureConsoleTab(node, { forceNew: true });
   }, [ensureConsoleTab]);
-
-  const handleSqlScript = useCallback(
-    async (node: ExplorerNode, kind: ObjectScriptKind) => {
-      const consoleContext = ensureConsoleTab(node);
-      if (!consoleContext) return;
-
-      const objectName = node.tableName || node.objectName || node.name;
-      const profile = resolveProfile(
-        consoleContext.dbType,
-        consoleContext.dbTypeConfig?.identifierQuoteStyle,
-      );
-
-      let columns: string[] = [];
-      if (kind === 'INSERT' || kind === 'UPDATE') {
-        try {
-          const cols = await columnService.listColumns(
-            String(consoleContext.connectionId),
-            objectName,
-            node.catalog || undefined,
-            node.schema || undefined,
-          );
-          columns = (cols ?? []).map((col) => col.name);
-        } catch {
-          columns = [];
-        }
-      }
-
-      const sql = generateObjectScript(
-        {
-          kind,
-          table: { catalog: node.catalog, schema: node.schema, name: objectName },
-          columns,
-          objectType: node.type === ExplorerNodeType.VIEW ? 'view' : 'table',
-        },
-        profile,
-      );
-
-      const existingContent = tabs.find((tab) => tab.id === consoleContext.tabId)?.content ?? '';
-      updateTabContent(consoleContext.tabId, appendSql(existingContent, sql));
-      switchTab(consoleContext.tabId);
-    },
-    [ensureConsoleTab, switchTab, tabs, updateTabContent],
-  );
 
   const getDdlConfig = useCallback(() => {
     if (!selectedDdlNode?.connectionId) return null;
@@ -437,10 +439,10 @@ export function useDataViewActions({
 
   return {
     handleViewDdl,
+    handleGenerateIndexes,
     handleViewData,
     handleTableOrViewDoubleClick,
     handleOpenQueryConsole,
-    handleSqlScript,
     handleCreateTable,
     handleOpenErDiagram,
     getDdlConfig,

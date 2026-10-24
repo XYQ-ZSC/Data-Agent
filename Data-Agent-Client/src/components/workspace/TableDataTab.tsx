@@ -4,6 +4,8 @@ import { Button } from '../ui/Button';
 import { I18N_KEYS } from '../../constants/i18nKeys';
 import type { TableTabMetadata } from '../../types/tab';
 import { DdlViewerDialog } from '../explorer/DdlViewerDialog';
+import { ExportDataDialog } from '../explorer/ExportDataDialog';
+import { ImportDataDialog } from '../explorer/ImportDataDialog';
 import { SqlGeneratorDialog } from './SqlGeneratorDialog';
 import {
   Dialog,
@@ -100,6 +102,18 @@ export function TableDataTab({ tabId, metadata }: TableDataTabProps) {
   } = useTableDataTabState({ tabId, metadata });
 
   const [sqlGeneratorOpen, setSqlGeneratorOpen] = useState(false);
+  const [importDialogOpen, setImportDialogOpen] = useState(false);
+  const [exportDialogOpen, setExportDialogOpen] = useState(false);
+
+  // Import/export operate on the whole table, same as the explorer right-click actions.
+  const transferCatalog = metadata.catalog ?? metadata.databaseName ?? '';
+  const transferParams = {
+    connectionId: metadata.connectionId,
+    tableName: metadata.objectName,
+    catalog: transferCatalog || undefined,
+    schema: metadata.schema ?? metadata.schemaName ?? undefined,
+  };
+  const transferTargetPath = `@${metadata.connectionName}/${transferCatalog}/${metadata.objectName}`;
 
   const {
     findVisible,
@@ -159,6 +173,8 @@ export function TableDataTab({ tabId, metadata }: TableDataTabProps) {
         onDeleteRow={handleDeleteRow}
         onOpenDdl={() => setDdlDialogOpen(true)}
         onOpenSqlGenerator={() => setSqlGeneratorOpen(true)}
+        onImportData={() => setImportDialogOpen(true)}
+        onExportData={() => setExportDialogOpen(true)}
         onDatabaseChange={handleDatabaseChange}
         onViewModeChange={handleViewModeChange}
         findVisible={findVisible}
@@ -220,6 +236,20 @@ export function TableDataTab({ tabId, metadata }: TableDataTabProps) {
         metadata={metadata}
         headers={columns}
         rows={selectedRows.filter((row) => !row.pendingLocalId).map((row) => row.row)}
+      />
+
+      <ImportDataDialog
+        open={importDialogOpen}
+        onOpenChange={setImportDialogOpen}
+        targetTablePath={transferTargetPath}
+        importParams={transferParams}
+      />
+
+      <ExportDataDialog
+        open={exportDialogOpen}
+        onOpenChange={setExportDialogOpen}
+        targetTablePath={transferTargetPath}
+        exportParams={transferParams}
       />
 
       <Dialog

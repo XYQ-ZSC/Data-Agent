@@ -14,7 +14,7 @@ import { useRenameActions } from '../../hooks/useRenameActions';
 import { I18N_KEYS } from '../../constants/i18nKeys';
 import { DataAttributes } from '../../constants/dataAttributes';
 import { EXPLORER_SQL_OBJECT_CHANGED, ExplorerNodeType, FolderName } from '../../constants/explorer';
-import type { ExplorerNode } from '../../types/explorer';
+import type { ExplorerNode, SqlScriptTarget } from '../../types/explorer';
 import { ExplorerHeader } from './ExplorerHeader';
 import { ExplorerTree, type ExplorerTreeHandle } from './ExplorerTree';
 import { ExplorerDialogs } from './ExplorerDialogs';
@@ -26,9 +26,8 @@ import { BatchImportDialog } from './BatchImportDialog';
 import type { BatchImportParams } from './BatchImportDialog';
 import { ImportDataDialog } from './ImportDataDialog';
 import type { ImportDataParams } from './ImportDataDialog';
-import { RunSqlScriptDialog } from './RunSqlScriptDialog';
-import type { SqlScriptTarget } from './RunSqlScriptDialog';
 import { SchemaDdlGeneratorDialog } from './SchemaDdlGeneratorDialog';
+import { RunSqlScriptDialog } from './RunSqlScriptDialog';
 
 export function DatabaseExplorer() {
   const { t } = useTranslation();
@@ -119,7 +118,7 @@ export function DatabaseExplorer() {
   });
 
   // Data view actions
-  const { handleViewDdl, handleViewData, handleTableOrViewDoubleClick, handleOpenQueryConsole, handleSqlScript, handleCreateTable, handleOpenErDiagram, getDdlConfig, resolveConsoleContext } = useDataViewActions({
+  const { handleViewDdl, handleGenerateIndexes, handleViewData, handleTableOrViewDoubleClick, handleOpenQueryConsole, handleCreateTable, handleOpenErDiagram, getDdlConfig, resolveConsoleContext } = useDataViewActions({
     setSelectedDdlNode,
     setDdlDialogOpen,
     setTableDataDialogOpen,
@@ -217,8 +216,8 @@ export function DatabaseExplorer() {
   };
 
   // SQL script (right-click a database/schema node): run a .sql file, or generate DDL.
-  const [runSqlScriptOpen, setRunSqlScriptOpen] = useState(false);
   const [sqlGeneratorOpen, setSqlGeneratorOpen] = useState(false);
+  const [runSqlScriptOpen, setRunSqlScriptOpen] = useState(false);
   const [sqlScriptTarget, setSqlScriptTarget] = useState<SqlScriptTarget | null>(null);
 
   const buildSqlScriptTarget = (node: ExplorerNode): SqlScriptTarget | null => {
@@ -227,16 +226,35 @@ export function DatabaseExplorer() {
     const conn = node.dbConnection ?? connections.find((c) => c.id === context.connectionId);
     const targetPath = [`@${conn?.host ?? ''}`, context.databaseName, context.schemaName]
       .filter(Boolean).join('/');
-    const scope = node.type === ExplorerNodeType.FOLDER && node.folderName === FolderName.TABLES
-      ? 'tables' : 'all';
+    const scope =
+      node.type === ExplorerNodeType.FOLDER && node.folderName === FolderName.TABLES ? 'tables'
+      : node.type === ExplorerNodeType.FOLDER && node.folderName === FolderName.VIEWS ? 'views'
+      : node.type === ExplorerNodeType.FOLDER && node.folderName === FolderName.ROUTINES ? 'routines'
+      : 'all';
     return {
       connectionId: context.connectionId,
       connectionName: context.connectionName,
       databaseName: context.databaseName,
       schemaName: context.schemaName,
+      dbType: context.dbType,
       targetPath,
       scope,
     };
+  };
+
+  const handleSqlGenerator = (node: ExplorerNode) => {
+    // Index nodes and the "indexes" folder have no backend DDL endpoint, so build
+    // CREATE INDEX statements client-side from index metadata.
+    if (node.type === ExplorerNodeType.INDEX
+      || (node.type === ExplorerNodeType.FOLDER && node.folderName === FolderName.INDEXES)) {
+      void handleGenerateIndexes(node);
+      return;
+    }
+    // Database/schema/folder nodes open the multi-object DDL generator dialog.
+    const target = buildSqlScriptTarget(node);
+    if (!target) return;
+    setSqlScriptTarget(target);
+    setSqlGeneratorOpen(true);
   };
 
   const handleRunSqlScript = (node: ExplorerNode) => {
@@ -244,13 +262,6 @@ export function DatabaseExplorer() {
     if (!target) return;
     setSqlScriptTarget(target);
     setRunSqlScriptOpen(true);
-  };
-
-  const handleSqlGenerator = (node: ExplorerNode) => {
-    const target = buildSqlScriptTarget(node);
-    if (!target) return;
-    setSqlScriptTarget(target);
-    setSqlGeneratorOpen(true);
   };
 
   useEffect(() => {
@@ -342,7 +353,6 @@ export function DatabaseExplorer() {
           onRename={handleRename}
           onDelete={handleDelete}
           onOpenQueryConsole={handleOpenQueryConsole}
-          onSqlScript={handleSqlScript}
           onRunSqlScript={handleRunSqlScript}
           onSqlGenerator={handleSqlGenerator}
           onCreateTable={handleCreateTable}
@@ -424,15 +434,15 @@ export function DatabaseExplorer() {
         importParams={importParams}
       />
 
-      <RunSqlScriptDialog
-        open={runSqlScriptOpen}
-        onOpenChange={setRunSqlScriptOpen}
-        target={sqlScriptTarget}
-      />
-
       <SchemaDdlGeneratorDialog
         open={sqlGeneratorOpen}
         onOpenChange={setSqlGeneratorOpen}
+        target={sqlScriptTarget}
+      />
+
+      <RunSqlScriptDialog
+        open={runSqlScriptOpen}
+        onOpenChange={setRunSqlScriptOpen}
         target={sqlScriptTarget}
       />
     </div>

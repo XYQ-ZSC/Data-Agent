@@ -10,14 +10,12 @@ import {
 } from '../ui/ContextMenu';
 import { ExplorerNodeType } from '../../constants/explorer';
 import type { ExplorerNode } from '../../types/explorer';
-import type { ObjectScriptKind } from '../../utils/sqlGenerator';
 import { I18N_KEYS } from '../../constants/i18nKeys';
 
 interface NodeContextMenuContentProps {
   node: ExplorerNode;
   isConnected: boolean;
   onOpenQueryConsole: (node: ExplorerNode) => void;
-  onSqlScript: (node: ExplorerNode, kind: ObjectScriptKind) => void;
   onRunSqlScript: (node: ExplorerNode) => void;
   onSqlGenerator: (node: ExplorerNode) => void;
   onCreateTable: (node: ExplorerNode) => void;
@@ -36,7 +34,6 @@ export function NodeContextMenuContent({
   node,
   isConnected,
   onOpenQueryConsole,
-  onSqlScript,
   onRunSqlScript,
   onSqlGenerator,
   onCreateTable,
@@ -80,6 +77,15 @@ export function NodeContextMenuContent({
 
   const isTablesFolder =
     node.type === ExplorerNodeType.FOLDER && node.folderName === 'tables';
+
+  const isViewsFolder =
+    node.type === ExplorerNodeType.FOLDER && node.folderName === 'views';
+
+  const isRoutinesFolder =
+    node.type === ExplorerNodeType.FOLDER && node.folderName === 'routines';
+
+  const isIndexesFolder =
+    node.type === ExplorerNodeType.FOLDER && node.folderName === 'indexes';
 
   const canCreateTable = isConnected && (isDb || isTablesFolder);
 
@@ -175,45 +181,20 @@ export function NodeContextMenuContent({
       )}
       {isTableOrView || isColumnOrIndexOrKey ? (hasDataOperations = true) : null}
 
-      {/* 3.2 SQL Scripts - run a .sql script file against this database/schema/tables folder */}
+      {/* 3.1 Run SQL Script - run a .sql script file against this database/schema/tables folder */}
       {isConnected && (isDb || isSchema || isTablesFolder) && (
-        <ContextMenuSub>
-          <ContextMenuSubTrigger>
-            <FileCode2 className="w-3.5 h-3.5 mr-2" />
-            {t(I18N_KEYS.EXPLORER.SQL_SCRIPTS)}
-          </ContextMenuSubTrigger>
-          <ContextMenuSubContent>
-            <ContextMenuItem onSelect={() => onRunSqlScript(node)}>
-              <Play className="w-3.5 h-3.5 mr-2" />
-              {t(I18N_KEYS.EXPLORER.RUN_SQL_SCRIPT)}
-            </ContextMenuItem>
-            <ContextMenuItem onSelect={() => onSqlGenerator(node)}>
-              <FileCode2 className="w-3.5 h-3.5 mr-2" />
-              {t(I18N_KEYS.EXPLORER.SQL_GENERATOR)}
-            </ContextMenuItem>
-          </ContextMenuSubContent>
-        </ContextMenuSub>
+        <ContextMenuItem onSelect={() => onRunSqlScript(node)}>
+          <Play className="w-3.5 h-3.5 mr-2" />
+          {t(I18N_KEYS.EXPLORER.RUN_SQL_SCRIPT)}
+        </ContextMenuItem>
       )}
 
-      {/* 3.25 SQL Scripts - generate DML/DDL statement skeletons */}
-      {isConnected && isTableOrView && (
-        <ContextMenuSub>
-          <ContextMenuSubTrigger>
-            <FileCode2 className="w-3.5 h-3.5 mr-2" />
-            {t(I18N_KEYS.EXPLORER.SQL_SCRIPTS)}
-          </ContextMenuSubTrigger>
-          <ContextMenuSubContent>
-            <ContextMenuItem onSelect={() => onSqlScript(node, 'SELECT')}>SELECT</ContextMenuItem>
-            {node.type === ExplorerNodeType.TABLE && (
-              <>
-                <ContextMenuItem onSelect={() => onSqlScript(node, 'INSERT')}>INSERT</ContextMenuItem>
-                <ContextMenuItem onSelect={() => onSqlScript(node, 'UPDATE')}>UPDATE</ContextMenuItem>
-                <ContextMenuItem onSelect={() => onSqlScript(node, 'DELETE')}>DELETE</ContextMenuItem>
-              </>
-            )}
-            <ContextMenuItem onSelect={() => onSqlScript(node, 'DROP')}>DROP</ContextMenuItem>
-          </ContextMenuSubContent>
-        </ContextMenuSub>
+      {/* 3.2 SQL Generator - generate DDL for databases, schemas, folders and non-primary-key indexes */}
+      {isConnected && (isDb || isSchema || isTablesFolder || isViewsFolder || isRoutinesFolder || (node.type === ExplorerNodeType.INDEX && !node.isPrimaryKey) || isIndexesFolder) && (
+        <ContextMenuItem onSelect={() => onSqlGenerator(node)}>
+          <FileCode2 className="w-3.5 h-3.5 mr-2" />
+          {t(I18N_KEYS.EXPLORER.SQL_GENERATOR)}
+        </ContextMenuItem>
       )}
 
       {/* 3.5 Import/Export Data - for tables (UI placeholder, functionality to be implemented later) */}

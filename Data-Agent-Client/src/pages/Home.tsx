@@ -10,34 +10,37 @@ import { EmptyState } from "../components/workspace/EmptyState";
 import { PlanConsole } from "../components/plan/PlanConsole";
 import { SubAgentConsole } from "../components/subagent/SubAgentConsole";
 import { useWorkspaceStore } from "../store/workspaceStore";
+import { useSqlRunStore } from "../store/sqlRunStore";
 import type { TableTabMetadata, PlanTabMetadata, SubAgentConsoleTabMetadata, ErDiagramTabMetadata } from "../types/tab";
-import type { ExecuteSqlResponse, SqlBatchMode, SqlSyntaxError } from "../types/sql";
-import { sqlExecutionService } from "../services/sqlExecution.service";
-import { sqlAnalysisService } from "../services/sqlAnalysis.service";
+import type { SqlBatchMode, SqlSyntaxError } from "../types/sql";
 import { connectionService } from "../services/connection.service";
+import { sqlAnalysisService } from "../services/sqlAnalysis.service";
 import { getSqlDialectByDbType } from "../constants/sqlDialect";
 import { formatSql } from "../utils/sql";
 import { containsNonAtomicStatement } from "../utils/sqlRunner";
 import { extractSqlVariables, substituteSqlVariables, type SqlVariable } from "../utils/sqlVariables";
 import { SqlParameterDialog } from "../components/editor/SqlParameterDialog";
 import { I18N_KEYS } from "../constants/i18nKeys";
-import { EXPLORER_SQL_OBJECT_CHANGED } from "../constants/explorer";
 
 const NO_VARIABLES: SqlVariable[] = [];
 
 export default function Home() {
     const { t } = useTranslation();
     const { tabs, activeTabId, updateTabContent, updateTabMetadata } = useWorkspaceStore();
-    const [isResultsVisible, setIsResultsVisible] = useState(false);
-    const [executeResult, setExecuteResult] = useState<ExecuteSqlResponse | null>(null);
-    const [scriptResults, setScriptResults] = useState<ExecuteSqlResponse[]>([]);
+    const {
+        executeResult,
+        scriptResults,
+        isRunning,
+        isResultsVisible,
+        cancelStatus,
+        runSql,
+        stopSql,
+        setResultsVisible,
+    } = useSqlRunStore();
     const [scriptMode, setScriptMode] = useState<SqlBatchMode>('ATOMIC');
     const [timeoutSeconds, setTimeoutSeconds] = useState(30);
     const [maxRows, setMaxRows] = useState(10000);
-    const executionIdRef = useRef<string | null>(null);
-    const [cancelStatus, setCancelStatus] = useState<string | null>(null);
     const editorRef = useRef<MonacoEditorHandle | null>(null);
-    const [isRunning, setIsRunning] = useState(false);
     const [connectionType, setConnectionType] = useState<{ id: number; dbType: string } | null>(null);
     const [diagnostics, setDiagnostics] = useState<SqlSyntaxError[]>([]);
     const [pendingParameters, setPendingParameters] = useState<{
@@ -99,14 +102,6 @@ export default function Home() {
     const executeSqlText = useCallback(async (sql: string) => {
         if (!sql || !sqlContext?.connectionId) return;
 
-        setIsRunning(true);
-        setCancelStatus(null);
-        const executionId = crypto.randomUUID();
-        executionIdRef.current = executionId;
-        setExecuteResult(null);
-        setScriptResults([]);
-        setIsResultsVisible(true);
-
         // ATOMIC mode only accepts queries and transactional DML; DDL (e.g. the
         // generated DROP/CREATE/ALTER scripts) is rejected server-side. Auto-switch
         // to STEPWISE for those scripts so they run instead of failing.
@@ -114,63 +109,17 @@ export default function Home() {
             scriptMode === 'ATOMIC' && containsNonAtomicStatement(sql) ? 'STEPWISE' : scriptMode;
         if (effectiveMode !== scriptMode) setScriptMode(effectiveMode);
 
-        try {
-            const results = await sqlExecutionService.executeScript({
-                connectionId: sqlContext.connectionId,
-                databaseName: sqlContext.databaseName ?? undefined,
-                schemaName: sqlContext.schemaName ?? undefined,
-                sql,
-                mode: effectiveMode,
-                timeoutMs: timeoutSeconds * 1000,
-                maxRows,
-                executionId,
-            });
-            setScriptResults(results);
-            const result = results[0];
-            if (!result) throw new Error('The script contained no executable statements');
-            setExecuteResult({
-                ...result,
-                originalSql: result.originalSql || sql,
-                executedSql: result.executedSql || sql,
-            });
-            if (results.some(item => item.success) && connectionType?.id === sqlContext.connectionId
-                && connectionType.dbType.toUpperCase() === 'DM') {
-                sqlAnalysisService.analyze({
-                    connectionId: sqlContext.connectionId,
-                    databaseName: sqlContext.databaseName,
-                    schemaName: sqlContext.schemaName,
-                    sql,
-                }).then(analysis => {
-                    if (analysis.errors.length) return;
-                    for (const [index, statement] of analysis.statements.entries()) {
-                        if (results[index]?.success && ['CREATE', 'ALTER', 'DROP', 'TRUNCATE'].includes(statement.type) && statement.objectType) {
-                            window.dispatchEvent(new CustomEvent(EXPLORER_SQL_OBJECT_CHANGED, {
-                                detail: {
-                                    connectionId: sqlContext.connectionId,
-                                    catalog: sqlContext.databaseName,
-                                    schema: sqlContext.schemaName,
-                                    objectType: statement.objectType,
-                                },
-                            }));
-                        }
-                    }
-                }).catch(() => undefined);
-            }
-        } catch (err: unknown) {
-            setExecuteResult({
-                success: false,
-                errorMessage: String(err),
-                executionTimeMs: 0,
-                originalSql: sql,
-                executedSql: sql,
-                query: false,
-                affectedRows: 0,
-            });
-        } finally {
-            executionIdRef.current = null;
-            setIsRunning(false);
-        }
-    }, [connectionType, sqlContext, scriptMode, timeoutSeconds, maxRows]);
+        await runSql({
+            connectionId: sqlContext.connectionId,
+            databaseName: sqlContext.databaseName,
+            schemaName: sqlContext.schemaName,
+            dbType: connectionType?.id === sqlContext.connectionId ? connectionType.dbType : undefined,
+            sql,
+            mode: effectiveMode,
+            timeoutMs: timeoutSeconds * 1000,
+            maxRows,
+        });
+    }, [connectionType, sqlContext, scriptMode, timeoutSeconds, maxRows, runSql]);
 
     const runSqlFromEditor = useCallback((getSql: () => string) => {
         if (pendingParameters) return;
@@ -198,22 +147,14 @@ export default function Home() {
             editorRef.current?.getSelectionOrStatement() ?? activeTab?.content ?? '');
     }, [runSqlFromEditor, activeTab?.content]);
 
-    const handleStop = useCallback(async () => {
-        if (!executionIdRef.current || !sqlContext?.connectionId) return;
-        try {
-            const outcome = await sqlExecutionService.cancelExecution({
-                connectionId: sqlContext.connectionId,
-                databaseName: sqlContext.databaseName,
-                schemaName: sqlContext.schemaName,
-                executionId: executionIdRef.current,
-            });
-            setCancelStatus(outcome === 'CANCEL_REQUESTED' ? 'Cancel requested; waiting for database confirmation'
-                : outcome === 'CANCEL_FAILED' ? 'Cancel request failed; query may still be running'
-                    : 'No active database statement to cancel');
-        } catch (error) {
-            setCancelStatus(`Cancel request failed: ${String(error)}`);
-        }
-    }, [sqlContext]);
+    const handleStop = useCallback(() => {
+        if (!sqlContext?.connectionId) return;
+        void stopSql({
+            connectionId: sqlContext.connectionId,
+            databaseName: sqlContext.databaseName,
+            schemaName: sqlContext.schemaName,
+        });
+    }, [sqlContext, stopSql]);
 
     // SQL Editor Shortcuts
     useEffect(() => {
@@ -255,7 +196,7 @@ export default function Home() {
             ) : (
                 <ResultsPanel
                     isVisible={isResultsVisible}
-                    onClose={() => setIsResultsVisible(false)}
+                    onClose={() => setResultsVisible(false)}
                     executeResult={executeResult}
                     scriptResults={scriptResults}
                     isRunning={isRunning}

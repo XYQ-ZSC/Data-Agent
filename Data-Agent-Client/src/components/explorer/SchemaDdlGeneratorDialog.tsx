@@ -1,15 +1,17 @@
 import { useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
-import { Check, Copy, Eye, FileCode2, Loader2, Table } from 'lucide-react';
+import { Check, Cog, Copy, Eye, FileCode2, FunctionSquare, Loader2, Table } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '../ui/Dialog';
 import { Button } from '../ui/Button';
 import { I18N_KEYS } from '../../constants/i18nKeys';
 import { tableService } from '../../services/table.service';
 import { viewService } from '../../services/view.service';
+import { functionService, type FunctionMetadata } from '../../services/function.service';
+import { procedureService, type ProcedureMetadata } from '../../services/procedure.service';
 import { useWorkspaceStore } from '../../store/workspaceStore';
 import { useToast } from '../../hooks/useToast';
-import type { SqlScriptTarget } from './RunSqlScriptDialog';
+import type { SqlScriptTarget } from '../../types/explorer';
 
 interface SchemaDdlGeneratorDialogProps {
   open: boolean;
@@ -30,10 +32,14 @@ export function SchemaDdlGeneratorDialog({ open, onOpenChange, target }: SchemaD
 
   const [tables, setTables] = useState<string[]>([]);
   const [views, setViews] = useState<string[]>([]);
+  const [functions, setFunctions] = useState<string[]>([]);
+  const [procedures, setProcedures] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [selectedTables, setSelectedTables] = useState<Set<string>>(new Set());
   const [selectedViews, setSelectedViews] = useState<Set<string>>(new Set());
+  const [selectedFunctions, setSelectedFunctions] = useState<Set<string>>(new Set());
+  const [selectedProcedures, setSelectedProcedures] = useState<Set<string>>(new Set());
   const [script, setScript] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
 
@@ -45,24 +51,39 @@ export function SchemaDdlGeneratorDialog({ open, onOpenChange, target }: SchemaD
     setCopied(false);
     setTables([]);
     setViews([]);
+    setFunctions([]);
+    setProcedures([]);
     setSelectedTables(new Set());
     setSelectedViews(new Set());
+    setSelectedFunctions(new Set());
+    setSelectedProcedures(new Set());
 
     const connectionId = String(target.connectionId);
     const catalog = target.databaseName ?? undefined;
     const schema = target.schemaName ?? undefined;
-    const onlyTables = target.scope === 'tables';
+    const scope = target.scope ?? 'all';
+    const includeTables = scope === 'all' || scope === 'tables';
+    const includeViews = scope === 'all' || scope === 'views';
+    const includeRoutines = scope === 'all' || scope === 'routines';
 
     Promise.all([
-      tableService.listTables(connectionId, catalog, schema),
-      onlyTables ? Promise.resolve<string[]>([]) : viewService.listViews(connectionId, catalog, schema),
+      includeTables ? tableService.listTables(connectionId, catalog, schema) : Promise.resolve<string[]>([]),
+      includeViews ? viewService.listViews(connectionId, catalog, schema) : Promise.resolve<string[]>([]),
+      includeRoutines ? functionService.listFunctions(connectionId, catalog, schema) : Promise.resolve<FunctionMetadata[]>([]),
+      includeRoutines ? procedureService.listProcedures(connectionId, catalog, schema) : Promise.resolve<ProcedureMetadata[]>([]),
     ])
-      .then(([tableNames, viewNames]) => {
+      .then(([tableNames, viewNames, functionMetas, procedureMetas]) => {
         if (cancelled) return;
+        const functionNames = functionMetas.map((f) => f.name);
+        const procedureNames = procedureMetas.map((p) => p.name);
         setTables(tableNames);
         setViews(viewNames);
+        setFunctions(functionNames);
+        setProcedures(procedureNames);
         setSelectedTables(new Set(tableNames));
         setSelectedViews(new Set(viewNames));
+        setSelectedFunctions(new Set(functionNames));
+        setSelectedProcedures(new Set(procedureNames));
       })
       .catch(() => {
         if (cancelled) return;
@@ -77,8 +98,8 @@ export function SchemaDdlGeneratorDialog({ open, onOpenChange, target }: SchemaD
     };
   }, [open, target, t, toast]);
 
-  const objectCount = tables.length + views.length;
-  const selectedCount = selectedTables.size + selectedViews.size;
+  const objectCount = tables.length + views.length + functions.length + procedures.length;
+  const selectedCount = selectedTables.size + selectedViews.size + selectedFunctions.size + selectedProcedures.size;
 
   const toggle = (set: Set<string>, name: string, apply: (next: Set<string>) => void) => {
     const next = new Set(set);
@@ -116,8 +137,20 @@ export function SchemaDdlGeneratorDialog({ open, onOpenChange, target }: SchemaD
             .catch(() => `-- Failed to generate DDL for view ${name}`),
         ),
       );
+      const functionDdls = await Promise.all(
+        functions.filter((name) => selectedFunctions.has(name)).map((name) =>
+          functionService.getFunctionDdl(connectionId, name, catalog, schema)
+            .catch(() => `-- Failed to generate DDL for function ${name}`),
+        ),
+      );
+      const procedureDdls = await Promise.all(
+        procedures.filter((name) => selectedProcedures.has(name)).map((name) =>
+          procedureService.getProcedureDdl(connectionId, name, catalog, schema)
+            .catch(() => `-- Failed to generate DDL for procedure ${name}`),
+        ),
+      );
 
-      setScript([...tableDdls, ...viewDdls].map(normalizeDdl).join('\n\n'));
+      setScript([...tableDdls, ...viewDdls, ...functionDdls, ...procedureDdls].map(normalizeDdl).join('\n\n'));
     } catch {
       toast.error(t(I18N_KEYS.EXPLORER.SQL_GENERATOR_DDL_FAILED));
       setScript(null);
@@ -240,6 +273,20 @@ export function SchemaDdlGeneratorDialog({ open, onOpenChange, target }: SchemaD
                   setSelectedViews,
                   <Eye className="h-3 w-3" />,
                   t(I18N_KEYS.EXPLORER.SQL_GENERATOR_DDL_VIEWS),
+                )}
+                {renderObjectList(
+                  functions,
+                  selectedFunctions,
+                  setSelectedFunctions,
+                  <FunctionSquare className="h-3 w-3" />,
+                  t(I18N_KEYS.EXPLORER.SQL_GENERATOR_DDL_FUNCTIONS),
+                )}
+                {renderObjectList(
+                  procedures,
+                  selectedProcedures,
+                  setSelectedProcedures,
+                  <Cog className="h-3 w-3" />,
+                  t(I18N_KEYS.EXPLORER.SQL_GENERATOR_DDL_PROCEDURES),
                 )}
               </div>
 

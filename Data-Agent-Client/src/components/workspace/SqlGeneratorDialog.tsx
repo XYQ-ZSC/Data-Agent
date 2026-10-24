@@ -16,7 +16,7 @@ import { I18N_KEYS } from '../../constants/i18nKeys';
 import type { TableTabMetadata } from '../../types/tab';
 import { primaryKeyService } from '../../services/primaryKey.service';
 import { useDbTypeStore } from '../../store/dbTypeStore';
-import { useTabStore } from '../../store/tabStore';
+import { useWorkspaceStore } from '../../store/workspaceStore';
 import { cn } from '../../lib/utils';
 import {
   DEFAULT_SQL_GENERATE_OPTIONS,
@@ -48,7 +48,7 @@ export function SqlGeneratorDialog({
   const { t } = useTranslation();
   const { theme } = useTheme();
   const supportedDbTypes = useDbTypeStore((s) => s.supportedDbTypes);
-  const openTab = useTabStore((s) => s.openTab);
+  const openTab = useWorkspaceStore((s) => s.openTab);
 
   const [statementType, setStatementType] = useState<SqlStatementType>('INSERT');
   const [options, setOptions] = useState<SqlGenerateOptions>({ ...DEFAULT_SQL_GENERATE_OPTIONS });
