@@ -3,6 +3,11 @@ import type { ErRelation, ErTable } from '../../services/table.service';
 import { columnKey, tableId } from './erDiagramRelations';
 import {
   cardHeight,
+  ER_MIN_ZOOM,
+  ER_MINIMAP_HIDE_SLACK,
+  ER_MINIMAP_SHOW_SLACK,
+  formatZoomPercent,
+  minimapNeeded,
   clearStoredLayout,
   hasStoredLayout,
   layoutBounds,
@@ -10,6 +15,7 @@ import {
   mergeStoredPositions,
   normalizeLayout,
   viewportForDiagram,
+  viewportShowsAllTables,
   readStoredLayout,
   toNodeId,
   visibleColumns,
@@ -117,6 +123,53 @@ describe('ER diagram layout storage', () => {
     expect(readStoredLayout('er', store)).toBeNull();
     expect(readStoredLayout('bad', store)).toBeNull();
     expect(readStoredLayout('partial', store)).toEqual({});
+  });
+});
+
+describe('ER diagram zoom label', () => {
+  it('rounds the viewport zoom to a percent', () => {
+    expect(formatZoomPercent(1)).toBe('100%');
+    expect(formatZoomPercent(0.08)).toBe('8%');
+    expect(formatZoomPercent(1.8)).toBe('180%');
+    expect(formatZoomPercent(0.854)).toBe('85%');
+  });
+});
+
+describe('ER diagram minimap visibility', () => {
+  const pane = { width: 1000, height: 700 };
+  const origin = { x: 0, y: 0, zoom: 1 };
+  const card = (x: number) => ({ x, y: 24, width: 260, height: 80 });
+
+  it('keeps the minimap hidden when the fit view already contains every table', () => {
+    const bounds = { x: 24, y: 24, width: 900, height: 1400 };
+    const viewport = viewportForDiagram(bounds, pane.width, pane.height);
+    expect(viewport).toBeTruthy();
+    expect(viewportShowsAllTables([bounds], viewport!, pane.width, pane.height, ER_MINIMAP_HIDE_SLACK)).toBe(true);
+    expect(minimapNeeded(false, [bounds], viewport!, pane.width, pane.height)).toBe(false);
+  });
+
+  it('asks for the minimap when the minimum zoom still cannot contain the diagram', () => {
+    const bounds = { x: 24, y: 24, width: 20000, height: 400 };
+    const viewport = viewportForDiagram(bounds, pane.width, pane.height)!;
+    expect(viewport.zoom).toBe(ER_MIN_ZOOM);
+    expect(minimapNeeded(false, [bounds], viewport, pane.width, pane.height)).toBe(true);
+  });
+
+  it('waits until a table is clearly outside, then keeps the minimap until the view is comfortably full', () => {
+    const barelyOutside = [card(-ER_MINIMAP_SHOW_SLACK)];
+    const clearlyOutside = [card(-(ER_MINIMAP_SHOW_SLACK + 1))];
+    const stillClipped = [card(-(ER_MINIMAP_HIDE_SLACK + 1))];
+    expect(minimapNeeded(false, barelyOutside, origin, pane.width, pane.height)).toBe(false);
+    expect(minimapNeeded(false, clearlyOutside, origin, pane.width, pane.height)).toBe(true);
+    expect(minimapNeeded(true, stillClipped, origin, pane.width, pane.height)).toBe(true);
+    expect(minimapNeeded(true, [card(-ER_MINIMAP_HIDE_SLACK)], origin, pane.width, pane.height)).toBe(false);
+  });
+
+  it('treats a zoomed-in table as outside the window without changing the decision rule', () => {
+    const tables = [card(24), card(400)];
+    const zoomed = { x: -24 * 2, y: 0, zoom: 2 };
+    expect(minimapNeeded(false, tables, zoomed, pane.width, pane.height)).toBe(true);
+    expect(viewportShowsAllTables([], origin, pane.width, pane.height)).toBe(true);
   });
 });
 
