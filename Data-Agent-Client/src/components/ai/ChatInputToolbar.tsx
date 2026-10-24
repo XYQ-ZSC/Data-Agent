@@ -1,4 +1,6 @@
-import { Send, Square, ChevronDown, Brain } from 'lucide-react';
+import { Send, Square, ChevronDown, Brain, Settings2 } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { ROUTES } from '../../constants/routes';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -7,9 +9,11 @@ import {
 } from '../ui/DropdownMenu';
 import { AGENT_COLORS, type AgentType } from './agentTypes';
 import type { ModelOption } from '../../types/ai';
+import { useTranslation } from 'react-i18next';
+import { I18N_KEYS } from '../../constants/i18nKeys';
 
 function modelDisplayLabel(option: ModelOption): string {
-  return option.modelName;
+  return option.name ?? option.modelName;
 }
 
 interface AgentOption {
@@ -23,7 +27,7 @@ interface ChatInputToolbarProps {
   setAgent: (agent: AgentType) => void;
   model: string;
   setModel: (model: string) => void;
-  /** Available models from API (or fallback). */
+  /** Available models authorized by the current workspace API. */
   modelOptions: ModelOption[];
   onSend: () => void;
   /** Abort current stream when user clicks stop. */
@@ -46,6 +50,9 @@ export function ChatInputToolbar({
   agents,
   CurrentAgentIcon,
 }: ChatInputToolbarProps) {
+  const { t } = useTranslation();
+  const navigate = useNavigate();
+  const configure = () => navigate(ROUTES.MODELS);
   const currentOption = modelOptions.find((m) => m.modelName === model);
 
   return (
@@ -82,7 +89,7 @@ export function ChatInputToolbar({
               type="button"
               className="h-7 px-2 rounded-lg border border-[color:var(--border-color)] bg-[color:var(--bg-panel)] text-xs theme-text-secondary hover:theme-text-primary transition-colors flex items-center gap-1.5"
             >
-              <span>{currentOption ? modelDisplayLabel(currentOption) : model}</span>
+              <span>{currentOption ? modelDisplayLabel(currentOption) : t(I18N_KEYS.AI.NO_AVAILABLE_MODELS)}</span>
               {currentOption?.supportThinking && (
                 <Brain className="w-3 h-3 opacity-70 shrink-0" aria-hidden />
               )}
@@ -102,14 +109,19 @@ export function ChatInputToolbar({
                 )}
               </DropdownMenuItem>
             ))}
+            <DropdownMenuItem onClick={configure} className="text-xs flex items-center gap-2 border-t theme-border mt-1 pt-2">
+              <Settings2 className="w-3.5 h-3.5" />{t('model_settings.configure')}
+            </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
+        {!currentOption && <button type="button" onClick={configure} className="text-xs text-primary hover:underline">{t('model_settings.configure')}</button>}
       </div>
 
       <div className="flex items-center space-x-2">
         <button
           type="button"
           onClick={isLoading ? (onStop ?? (() => {})) : onSend}
+          disabled={!isLoading && !currentOption}
           className={`w-8 h-8 rounded-lg flex items-center justify-center transition-colors ${AGENT_COLORS[agent].sendBtn}`}
           aria-label={isLoading ? 'Stop' : 'Send'}
         >
