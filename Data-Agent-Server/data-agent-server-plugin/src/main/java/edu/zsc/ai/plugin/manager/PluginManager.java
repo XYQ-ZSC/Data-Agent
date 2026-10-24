@@ -6,12 +6,16 @@ import edu.zsc.ai.plugin.capability.CommandExecutor;
 import edu.zsc.ai.plugin.capability.FunctionManager;
 import edu.zsc.ai.plugin.capability.IndexManager;
 import edu.zsc.ai.plugin.capability.ProcedureManager;
+import edu.zsc.ai.plugin.capability.SqlCompleter;
 import edu.zsc.ai.plugin.capability.SqlSplitter;
+import edu.zsc.ai.plugin.capability.SqlAnalyzer;
 import edu.zsc.ai.plugin.capability.SqlValidator;
 import edu.zsc.ai.plugin.capability.TriggerManager;
 import edu.zsc.ai.plugin.capability.ConnectionManager;
+import edu.zsc.ai.plugin.capability.ConstraintManager;
 import edu.zsc.ai.plugin.capability.DatabaseManager;
 import edu.zsc.ai.plugin.capability.SchemaManager;
+import edu.zsc.ai.plugin.capability.SequenceManager;
 import edu.zsc.ai.plugin.capability.TableManager;
 import edu.zsc.ai.plugin.capability.ViewManager;
 import edu.zsc.ai.plugin.model.command.sql.SqlCommandRequest;
@@ -85,6 +89,10 @@ public interface PluginManager {
 
     TriggerManager getTriggerManagerByPluginId(@NotBlank String pluginId);
 
+    SequenceManager getSequenceManagerByPluginId(@NotBlank String pluginId);
+
+    ConstraintManager getConstraintManagerByPluginId(@NotBlank String pluginId);
+
     CommandExecutor<SqlCommandRequest, SqlCommandResult> getSqlCommandExecutorByPluginId(@NotBlank String pluginId);
 
     /**
@@ -98,4 +106,16 @@ public interface PluginManager {
      * Falls back to DefaultSqlValidator if the plugin does not implement SqlValidator.
      */
     SqlValidator getSqlValidatorByPluginId(@NotBlank String pluginId);
+
+    boolean supportsSqlValidationByPluginId(@NotBlank String pluginId);
+
+    SqlAnalyzer getSqlAnalyzerByPluginId(@NotBlank String pluginId);
+
+    /**
+     * Get the SqlCompleter for the given plugin, or null when the plugin does
+     * not implement SqlCompleter (completion is then unsupported).
+     */
+    SqlCompleter getSqlCompleterByPluginId(@NotBlank String pluginId);
+
+    boolean supportsSqlCompletionByPluginId(@NotBlank String pluginId);
 }

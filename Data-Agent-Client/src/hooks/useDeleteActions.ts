@@ -36,6 +36,7 @@ export function useDeleteActions({
             name: child.name,
             catalog: folderNode.catalog,
             schema: folderNode.schema,
+            tableName: child.tableName,
           });
         } catch (err) {
           console.error(`Failed to delete ${child.type} ${child.name}:`, err);
@@ -64,6 +65,7 @@ export function useDeleteActions({
           name: node.name,
           catalog: node.catalog,
           schema: node.schema,
+          tableName: node.tableName,
         });
 
         setTreeDataState((prev: ExplorerNode[]) => removeNodeById(prev, node.id));

@@ -1,11 +1,14 @@
 import { useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
-import { ExplorerNodeType } from '../constants/explorer';
+import { ExplorerNodeType, FolderName, INDEX_UNIQUE_SUFFIX } from '../constants/explorer';
 import { tableService } from '../services/table.service';
 import { viewService } from '../services/view.service';
 import { functionService } from '../services/function.service';
 import { procedureService } from '../services/procedure.service';
 import { triggerService } from '../services/trigger.service';
+import { sequenceService } from '../services/sequence.service';
+import { constraintService } from '../services/constraint.service';
+import { indexService } from '../services/index.service';
 import { useWorkspaceStore } from '../store/workspaceStore';
 import { TableDblClickConsoleTargetEnum, TableDblClickModeEnum } from '../constants/workspacePreferences';
 import { I18N_KEYS } from '../constants/i18nKeys';
@@ -208,6 +211,12 @@ export function useDataViewActions({
         case ExplorerNodeType.TRIGGER:
           loadDdl = () => triggerService.getTriggerDdl(String(consoleContext.connectionId), objectName, catalog, schema);
           break;
+        case ExplorerNodeType.SEQUENCE:
+          loadDdl = () => sequenceService.getSequenceDdl(String(consoleContext.connectionId), objectName, catalog, schema);
+          break;
+        case ExplorerNodeType.CONSTRAINT:
+          loadDdl = () => constraintService.getConstraintDdl(String(consoleContext.connectionId), objectName, catalog, schema);
+          break;
         default:
           return;
       }
@@ -221,6 +230,52 @@ export function useDataViewActions({
       }
     },
     [ensureConsoleTab, updateTabContent, t]
+  );
+
+  // Indexes have no backend DDL endpoint, so build CREATE INDEX statements from
+  // listIndexes metadata (skipping primary-key indexes, which live in the table DDL).
+  const handleGenerateIndexes = useCallback(
+    async (node: ExplorerNode) => {
+      const consoleContext = ensureConsoleTab(node);
+      if (!consoleContext || !node.tableName) return;
+
+      const catalog = node.catalog ?? '';
+      const schema = node.schema ?? '';
+      const quoteStyle = consoleContext.dbTypeConfig?.identifierQuoteStyle ?? 'double_quote';
+      const quote = (name: string) => quoteIdentifier(name, quoteStyle);
+
+      try {
+        const indexes = await indexService.listIndexes(
+          String(consoleContext.connectionId),
+          node.tableName,
+          catalog,
+          schema,
+        );
+        const isFolder = node.type === ExplorerNodeType.FOLDER && node.folderName === FolderName.INDEXES;
+
+        const ddl = indexes
+          .filter((idx) => {
+            if (idx.isPrimaryKey) return false;
+            if (isFolder) return true;
+            const colList = idx.columns?.length ? idx.columns.join(', ') : '';
+            const displayName = (colList ? `${idx.name} (${colList})` : idx.name)
+              + (idx.unique ? INDEX_UNIQUE_SUFFIX : '');
+            return displayName === node.name;
+          })
+          .map((idx) => {
+            const cols = (idx.columns ?? []).map(quote).join(', ');
+            const unique = idx.unique ? 'UNIQUE ' : '';
+            return `CREATE ${unique}INDEX ${quote(idx.name)} ON ${quote(node.tableName!)} (${cols});`;
+          })
+          .join('\n\n');
+
+        updateTabContent(consoleContext.tabId, ddl || `-- No indexes to generate for ${node.tableName}\n`);
+      } catch (err) {
+        const errMsg = (err as Error).message || t(I18N_KEYS.EXPLORER.LOAD_DDL_FAILED);
+        updateTabContent(consoleContext.tabId, `-- ${errMsg}\n`);
+      }
+    },
+    [ensureConsoleTab, updateTabContent, t],
   );
 
   const handleViewData = useCallback(
@@ -336,6 +391,18 @@ export function useDataViewActions({
           displayName,
           loadDdl: () => triggerService.getTriggerDdl(connId, objectName, catalog, schema),
         };
+      case ExplorerNodeType.SEQUENCE:
+        return {
+          title: t('explorer.sequence_ddl_title'),
+          displayName,
+          loadDdl: () => sequenceService.getSequenceDdl(connId, objectName, catalog, schema),
+        };
+      case ExplorerNodeType.CONSTRAINT:
+        return {
+          title: t('explorer.constraint_ddl_title'),
+          displayName,
+          loadDdl: () => constraintService.getConstraintDdl(connId, objectName, catalog, schema),
+        };
       default:
         return null;
     }
@@ -346,12 +413,39 @@ export function useDataViewActions({
     setCreateTableDialogOpen(true);
   }, [setSelectedCreateTableNode, setCreateTableDialogOpen]);
 
+  const handleOpenErDiagram = useCallback((node: ExplorerNode) => {
+    if (!node.connectionId) return;
+    const connectionId = Number(node.connectionId);
+    const connection = node.dbConnection ?? getConnection(connectionId);
+    const catalog = node.catalog ?? '';
+    const schema = node.schema ?? '';
+    const scope = schema || catalog || node.name;
+    openTab({
+      id: `er-${connectionId}-${catalog}-${schema}`,
+      name: `ER ${scope}`,
+      type: 'er',
+      content: '',
+      metadata: {
+        connectionId,
+        dbType: connection?.dbType,
+        connectionName: connection?.name || 'Unknown',
+        databaseName: catalog || schema || null,
+        schemaName: schema || null,
+        catalog: catalog || null,
+        schema: schema || null,
+      },
+    });
+  }, [getConnection, openTab]);
+
   return {
     handleViewDdl,
+    handleGenerateIndexes,
     handleViewData,
     handleTableOrViewDoubleClick,
     handleOpenQueryConsole,
     handleCreateTable,
+    handleOpenErDiagram,
     getDdlConfig,
+    resolveConsoleContext,
   };
 }
