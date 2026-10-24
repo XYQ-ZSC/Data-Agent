@@ -63,7 +63,6 @@ export const I18N_KEYS = {
     REMEMBER_ME: 'auth.remember_me',
     SIGNING_IN: 'auth.signing_in',
     SIGN_IN: 'auth.sign_in',
-    OR_CONTINUE_WITH: 'auth.or_continue_with',
     NO_ACCOUNT: 'auth.no_account',
     SIGN_UP: 'auth.sign_up',
     SIGN_UP_TITLE: 'auth.sign_up_title',

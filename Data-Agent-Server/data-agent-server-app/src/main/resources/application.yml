@@ -50,16 +50,6 @@ sa-token:
 auth:
   refresh-token:
     expire-seconds: 2592000     # 30 days
-  oauth2:
-    clients:
-      google:
-        client-id: ${GOOGLE_CLIENT_ID}
-        client-secret: ${GOOGLE_CLIENT_SECRET}
-        redirect-uri: ${GOOGLE_REDIRECT_URI}
-      github:
-        client-id: ${GITHUB_CLIENT_ID}
-        client-secret: ${GITHUB_CLIENT_SECRET}
-        redirect-uri: ${GITHUB_REDIRECT_URI}
 
 ai:
   qwen:
