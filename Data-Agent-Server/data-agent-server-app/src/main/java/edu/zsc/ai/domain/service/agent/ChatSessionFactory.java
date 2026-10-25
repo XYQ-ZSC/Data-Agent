@@ -57,7 +57,10 @@ public class ChatSessionFactory {
         RequestContextInfo previousRequestContext = RequestContext.snapshot();
         AgentRequestContextInfo previousAgentRequestContext = AgentRequestContext.snapshot();
         try {
-            ModelRunSnapshot modelRun = modelRuntime.enabled() ? modelRuntime.prepare(request.getModelConfigId(), request.getModel()) : null;
+            ModelRunSnapshot modelRun = modelRuntime.enabled() ? request.getThinkingMode()==null
+                    ? modelRuntime.prepare(request.getModelConfigId(),request.getModel())
+                    : modelRuntime.prepare(request.getModelConfigId(),request.getModel(),request.getThinkingMode()) : null;
+            if (modelRun == null && request.getThinkingMode() != null) throw ModelIntegrationException.capability();
             if (modelRun == null && request.getModelConfigId() != null && !request.getModelConfigId().isBlank()) throw ModelIntegrationException.unavailable();
             String modelName = modelRun == null ? resolveModel(request.getModel()) : modelRun.model(ModelPurpose.MAIN_CHAT).modelConfigId();
             AgentModeEnum agentMode = AgentModeEnum.fromRequest(request.getAgentType());

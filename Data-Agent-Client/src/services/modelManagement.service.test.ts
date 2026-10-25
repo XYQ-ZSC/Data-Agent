@@ -74,4 +74,17 @@ describe('model management request ownership and credentials', () => {
     vi.mocked(http.put).mockClear();scope.user.id = 2;
     await expect(api.bindPreset('EXPLORER', body)).rejects.toThrow('MODEL_MANAGEMENT_FORBIDDEN');expect(http.put).not.toHaveBeenCalled();
   });
+  it('saves a task thinking override with the binding version without modifying the shared model', async () => {
+    vi.mocked(http.put).mockResolvedValue({ data: {} });
+    const api = createModelManagementService();scope.workspaceOrgId = 91;
+    await api.bind('PLANNER', 'shared-model', 4, 'ENABLED');
+    expect(http.put).toHaveBeenLastCalledWith('/ai/model-bindings/PLANNER', { expectedVersion: 4, modelConfigId: 'shared-model', thinkingMode: 'ENABLED' },
+      { headers: { 'X-Workspace-Type': 'ORGANIZATION', 'X-Org-Id': '90' } });
+    await api.bind('COMPRESSION', 'shared-model', 2, 'DISABLED');
+    expect(http.put).toHaveBeenLastCalledWith('/ai/model-bindings/COMPRESSION', { expectedVersion: 2, modelConfigId: 'shared-model', thinkingMode: 'DISABLED' }, expect.anything());
+    expect(http.patch).not.toHaveBeenCalled();
+    vi.mocked(http.put).mockClear();scope.user.id = 2;
+    await expect(api.bind('PLANNER', 'shared-model', 5, 'DISABLED')).rejects.toThrow('MODEL_MANAGEMENT_FORBIDDEN');
+    expect(http.put).not.toHaveBeenCalled();
+  });
 });

@@ -1,4 +1,4 @@
-import { Send, Square, ChevronDown, Brain, Settings2 } from 'lucide-react';
+import { Send, Square, ChevronDown } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { ROUTES } from '../../constants/routes';
 import {
@@ -10,11 +10,9 @@ import {
 import { AGENT_COLORS, type AgentType } from './agentTypes';
 import type { ModelOption } from '../../types/ai';
 import { useTranslation } from 'react-i18next';
-import { I18N_KEYS } from '../../constants/i18nKeys';
-
-function modelDisplayLabel(option: ModelOption): string {
-  return option.name ?? option.modelName;
-}
+import { ChatModelSelector } from './ChatModelSelector';
+import { ChatThinkingToggle } from './ChatThinkingToggle';
+import type { ThinkingMode } from '../../types/modelManagement';
 
 interface AgentOption {
   type: AgentType;
@@ -29,6 +27,8 @@ interface ChatInputToolbarProps {
   setModel: (model: string) => void;
   /** Available models authorized by the current workspace API. */
   modelOptions: ModelOption[];
+  thinkingMode?: ThinkingMode;
+  setThinkingMode?: (mode: ThinkingMode) => void;
   onSend: () => void;
   /** Abort current stream when user clicks stop. */
   onStop?: () => void;
@@ -44,6 +44,8 @@ export function ChatInputToolbar({
   model,
   setModel,
   modelOptions,
+  thinkingMode,
+  setThinkingMode,
   onSend,
   onStop,
   isLoading = false,
@@ -56,8 +58,8 @@ export function ChatInputToolbar({
   const currentOption = modelOptions.find((m) => m.modelName === model);
 
   return (
-    <div className="flex items-center justify-between">
-      <div className="flex items-center gap-2">
+    <div className="flex items-end justify-between gap-2">
+      <div className="flex flex-wrap items-center gap-2 min-w-0">
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <button
@@ -83,37 +85,8 @@ export function ChatInputToolbar({
           </DropdownMenuContent>
         </DropdownMenu>
 
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <button
-              type="button"
-              className="h-7 px-2 rounded-lg border border-[color:var(--border-color)] bg-[color:var(--bg-panel)] text-xs theme-text-secondary hover:theme-text-primary transition-colors flex items-center gap-1.5"
-            >
-              <span>{currentOption ? modelDisplayLabel(currentOption) : t(I18N_KEYS.AI.NO_AVAILABLE_MODELS)}</span>
-              {currentOption?.supportThinking && (
-                <Brain className="w-3 h-3 opacity-70 shrink-0" aria-hidden />
-              )}
-              <ChevronDown className="w-2.5 h-2.5 opacity-50 shrink-0" />
-            </button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="start" className="w-40">
-            {modelOptions.map((m) => (
-              <DropdownMenuItem
-                key={m.modelName}
-                onClick={() => setModel(m.modelName)}
-                className="text-[10px] flex items-center gap-2"
-              >
-                <span>{modelDisplayLabel(m)}</span>
-                {m.supportThinking && (
-                  <Brain className="w-3.5 h-3.5 theme-text-secondary shrink-0" aria-hidden />
-                )}
-              </DropdownMenuItem>
-            ))}
-            <DropdownMenuItem onClick={configure} className="text-xs flex items-center gap-2 border-t theme-border mt-1 pt-2">
-              <Settings2 className="w-3.5 h-3.5" />{t('model_settings.configure')}
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
+        <ChatModelSelector value={model} options={modelOptions} onSelect={setModel} onConfigure={configure} />
+        {setThinkingMode && <ChatThinkingToggle model={currentOption} value={thinkingMode} onChange={setThinkingMode} />}
         {!currentOption && <button type="button" onClick={configure} className="text-xs text-primary hover:underline">{t('model_settings.configure')}</button>}
       </div>
 

@@ -13,6 +13,7 @@ public class ModelRuntime {
     private final ModelClientRegistry registry;
     public boolean enabled() { return resolver.enabled(); }
     public ModelRunSnapshot prepare(String id, String legacyName) { return resolver.resolveRun(id, legacyName); }
+    public ModelRunSnapshot prepare(String id,String legacyName,MultiProviderProperties.ThinkingMode thinkingMode) { return resolver.resolveRun(id,legacyName,thinkingMode); }
     public ModelRunSnapshot currentRun() {
         var context = AgentRequestContext.snapshot();
         ModelRunSnapshot run = context == null ? null : context.getModelRunSnapshot();

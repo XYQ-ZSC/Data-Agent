@@ -22,15 +22,21 @@ public class ModelOptionResponse implements Serializable {
      */
     private String modelName;
     private String modelConfigId;
+    /** Upstream model ID for display, separate from the authorized selection ID. */
+    private String modelId;
     private String name;
     private String provider;
     private String apiStyle;
+    private String compatibilityProfile;
     private boolean defaultModel;
 
     /**
      * Whether this model supports thinking/reasoning mode (e.g. for displaying brain icon).
      */
     private boolean supportThinking;
+    private edu.zsc.ai.config.ai.model.MultiProviderProperties.ThinkingMode thinkingMode;
+    @Builder.Default
+    private java.util.List<edu.zsc.ai.config.ai.model.MultiProviderProperties.ThinkingMode> thinkingModes=java.util.List.of();
 
     /**
      * Token threshold used by server-side memory compression heuristics.

@@ -1,7 +1,7 @@
 import http from '../lib/http';
 import { useAuthStore } from '../store/authStore';
 import { X_ORG_ID, X_WORKSPACE_TYPE } from '../constants/workspaceHeaders';
-import type { ConnectionInput, ConnectionTestInput, ConnectionTestResult, ManagedModel, ModelConnection, ModelInput, ModelManagementStatus, ModelProfile, ModelPurpose, ModelSetupInput, ModelSetupResult, ModelSpecification, ModelTest, PresetBindingInput, PurposeBinding } from '../types/modelManagement';
+import type { ConnectionInput, ConnectionTestInput, ConnectionTestResult, ManagedModel, ModelConnection, ModelInput, ModelManagementStatus, ModelProfile, ModelPurpose, ModelSetupInput, ModelSetupResult, ModelSpecification, ModelTest, PresetBindingInput, PurposeBinding, ThinkingMode } from '../types/modelManagement';
 
 /** Freeze request ownership when the screen is created, including during token refresh. */
 export function createModelManagementService() {
@@ -35,8 +35,8 @@ export function createModelManagementService() {
       : (await http.post<ManagedModel>('/ai/model-configs', body, options())).data,
     disableModel: async (id: string, expectedVersion: number) =>
       (await http.post<ManagedModel>(`/ai/model-configs/${id}/disable`, { expectedVersion }, options())).data,
-    bind: async (purpose: ModelPurpose, modelConfigId: string, expectedVersion: number) =>
-      (await http.put<PurposeBinding>(`/ai/model-bindings/${purpose}`, { expectedVersion, modelConfigId }, options())).data,
+    bind: async (purpose: ModelPurpose, modelConfigId: string, expectedVersion: number, thinkingMode?: ThinkingMode) =>
+      (await http.put<PurposeBinding>(`/ai/model-bindings/${purpose}`, { expectedVersion, modelConfigId, ...(thinkingMode === undefined ? {} : { thinkingMode }) }, options())).data,
     bindPreset: async (purpose: ModelPurpose, body: PresetBindingInput) =>
       (await http.put<PurposeBinding>(`/ai/model-bindings/${purpose}/preset`, body, options())).data,
     test: async (id: string, level: string) => (await http.post<ModelTest>(`/ai/model-configs/${id}/test`, { level }, options())).data,

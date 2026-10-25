@@ -10,13 +10,17 @@ describe('workspace model availability', () => {
 
   it('preserves distinct configuration IDs for identical upstream names', async () => {
     vi.mocked(http.get).mockResolvedValue({ data: [
-      { modelName: 'same-model', modelConfigId: 'config-a', name: 'Primary', defaultModel: true },
+      { modelName: 'same-model', modelConfigId: 'config-a', modelId: 'qwen3.8-max', name: 'Primary', provider: 'OPENAI', compatibilityProfile: 'qwen-chat-v1', defaultModel: true,
+        thinkingMode: 'DISABLED', thinkingModes: ['DISABLED', 'ENABLED'] },
       { modelName: 'same-model', modelConfigId: 'config-b', name: 'Backup' },
     ] });
     const options = await aiService.getModels();
     expect(options.map((m) => m.modelName)).toEqual(['config-a', 'config-b']);
     expect(modelRequest('config-b', options)).toEqual({ modelConfigId: 'config-b' });
     expect(options[0].defaultModel).toBe(true);
+    expect(options[0]).toMatchObject({ modelId: 'qwen3.8-max', provider: 'OPENAI', compatibilityProfile: 'qwen-chat-v1' });
+    expect(modelRequest('config-a', options)).toEqual({ modelConfigId: 'config-a' });
+    expect(options[0]).toMatchObject({ thinkingMode: 'DISABLED', thinkingModes: ['DISABLED', 'ENABLED'] });
     expect(defaultModelSelection([...options].reverse())).toBe('config-a');
     expect(defaultModelSelection([])).toBe('');
   });
@@ -35,5 +39,18 @@ describe('workspace model availability', () => {
     expect(modelRequest('legacy', options)).toEqual({ model: 'legacy' });
     expect(options[0].supportThinking).toBe(false);
     expect(options[0].memoryThreshold).toBeNull();
+  });
+
+  it('retains all four server-authorized Qwen choices and submits the selected preset configuration ID', async () => {
+    const models = ['qwen3.8-max', 'qwen3.6-flash', 'qwen-plus', 'qwen3.5-plus'];
+    vi.mocked(http.get).mockResolvedValue({ data: models.map((modelId, index) => ({
+      modelName: index ? `qwen-preset/source-config/${modelId}` : 'source-config',
+      modelConfigId: index ? `qwen-preset/source-config/${modelId}` : 'source-config',
+      modelId, name: 'qwen', provider: 'QWEN', compatibilityProfile: 'qwen-chat-v1', maxContextTokens: 1000000,
+    })) });
+    const options = await aiService.getModels();
+    expect(options.map((option) => option.modelId)).toEqual(models);
+    expect(options.map((option) => option.maxContextTokens)).toEqual([1000000, 1000000, 1000000, 1000000]);
+    expect(modelRequest(options[3].modelName, options)).toEqual({ modelConfigId: 'qwen-preset/source-config/qwen3.5-plus' });
   });
 });

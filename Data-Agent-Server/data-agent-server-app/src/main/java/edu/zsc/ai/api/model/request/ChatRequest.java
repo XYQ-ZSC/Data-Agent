@@ -26,6 +26,9 @@ public class ChatRequest extends BaseRequest {
     /** Internal server configuration ID; a supplied legacy name must identify the same configuration. */
     private String modelConfigId;
 
+    /** Optional per-message main-chat thinking override; capabilities are validated server-side. */
+    private edu.zsc.ai.config.ai.model.MultiProviderProperties.ThinkingMode thinkingMode;
+
     /**
      * Preferred prompt language, e.g. "en" or "zh".
      * Optional; server defaults to English prompt when blank/unknown.

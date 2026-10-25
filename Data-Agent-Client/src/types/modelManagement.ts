@@ -26,8 +26,8 @@ export interface ManagedModel {
   tokenLimits?: { maxContextTokens: number | null; maxOutputTokens: number | null } | null;
   taskPreset?: boolean;
 }
-export interface PurposeBinding { purpose: ModelPurpose; modelConfigId: string | null; version: number }
-export interface PresetBindingInput { expectedVersion: number; connectionId: string; connectionExpectedVersion: number; modelId: string }
+export interface PurposeBinding { purpose: ModelPurpose; modelConfigId: string | null; version: number; thinkingMode?: ThinkingMode | null; thinkingModes?: ThinkingMode[] }
+export interface PresetBindingInput { expectedVersion: number; connectionId: string; connectionExpectedVersion: number; modelId: string; thinkingMode?: ThinkingMode }
 export interface ModelProfile { apiStyle: ApiStyle; compatibilityProfile: string; capabilityProfile: string; thinkingModes: ThinkingMode[]; resource: string }
 export interface ModelSpecification {
   modelId: string; aliases: string[]; contextTokens: number; maxOutputTokens: number; maxThinkingOutputTokens: number;

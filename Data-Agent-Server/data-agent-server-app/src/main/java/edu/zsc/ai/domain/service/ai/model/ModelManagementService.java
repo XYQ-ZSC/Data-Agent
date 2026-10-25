@@ -154,7 +154,7 @@ public class ModelManagementService {
                     s.bindings.put(purpose,new FileModelState.Binding(id,previous==null?1:previous.version()+1));
                 }
             }
-            return new Setup(connectionResponse(s,connection(s,c.id())),modelResponse(s,m),Arrays.stream(ModelPurpose.values()).map(p->{var b=s.bindings.get(p);return new Binding(p,b==null?null:b.modelConfigId(),b==null?0:b.version());}).toList());
+            return new Setup(connectionResponse(s,connection(s,c.id())),modelResponse(s,m),Arrays.stream(ModelPurpose.values()).map(p->bindingResponse(s,p)).toList());
         });
     }
     public List<Model> models() { return store.read(scope(true),s->s.models.values().stream().map(m->modelResponse(s,m)).toList()); }
@@ -185,7 +185,7 @@ public class ModelManagementService {
         });
     }
     public List<Binding> bindings() {
-        return store.read(scope(false),s->Arrays.stream(ModelPurpose.values()).map(p->{var b=s.bindings.get(p);return new Binding(p,b==null?null:b.modelConfigId(),b==null?0:b.version());}).toList());
+        return store.read(scope(false),s->Arrays.stream(ModelPurpose.values()).map(p->bindingResponse(s,p)).toList());
     }
     public Binding bind(ModelPurpose purpose,ModelManagementRequests.Binding input) {
         return store.update(scope(true),s->{
@@ -193,7 +193,8 @@ public class ModelManagementService {
             if(input.expectedVersion()!=(old==null?0:old.version()))throw ModelManagementException.conflict();
             var m=model(s,input.modelConfigId());var c=s.connections.get(m.connectionId());
             if(!available(s,m,c) || (purpose==ModelPurpose.MAIN_CHAT && !m.chatVisible()))throw ModelManagementException.invalid();
-            long version=input.expectedVersion()+1;s.bindings.put(purpose,new FileModelState.Binding(m.id(),version));return new Binding(purpose,m.id(),version);
+            var thinking=bindingThinking(s,purpose,m,c,input.thinkingMode());
+            long version=input.expectedVersion()+1;s.bindings.put(purpose,new FileModelState.Binding(m.id(),version,thinking));return bindingResponse(s,purpose);
         });
     }
     /** Resolve a provider preset and its purpose binding in one workspace-locked update, reusing the connection key. */
@@ -221,9 +222,25 @@ public class ModelManagementService {
                         .withTokenLimits(new ConfiguredTokenLimits(null,null)).withTaskPreset(true);
                 s.models.put(id,selected);
             }
-            var binding=new FileModelState.Binding(selected.id(),input.expectedVersion()+1);s.bindings.put(purpose,binding);
-            return new Binding(purpose,binding.modelConfigId(),binding.version());
+            var thinking=bindingThinking(s,purpose,selected,c,input.thinkingMode());
+            var binding=new FileModelState.Binding(selected.id(),input.expectedVersion()+1,thinking);s.bindings.put(purpose,binding);
+            return bindingResponse(s,purpose);
         });
+    }
+    private MultiProviderProperties.ThinkingMode bindingThinking(FileModelState s,ModelPurpose purpose,FileModelState.Model model,
+            FileModelState.Connection connection,MultiProviderProperties.ThinkingMode requested) {
+        var previous=s.bindings.get(purpose);
+        var mode=requested!=null?requested:previous==null?null:previous.thinkingMode();
+        if(requested==null && mode!=null && !ModelThinkingOptions.modes(model,connection).contains(mode))mode=null;
+        ModelThinkingOptions.validate(model,connection,mode,purpose);
+        return mode;
+    }
+    private Binding bindingResponse(FileModelState s,ModelPurpose purpose) {
+        var binding=s.bindings.get(purpose);var model=binding==null?null:s.models.get(binding.modelConfigId());
+        var connection=model==null?null:s.connections.get(model.connectionId());
+        var resolved=model==null?null:repository.find(model.id(),purpose);
+        return new Binding(purpose,binding==null?null:binding.modelConfigId(),binding==null?0:binding.version(),
+                resolved!=null?resolved.options().thinkingMode():model==null?null:model.options().thinkingMode(),ModelThinkingOptions.modes(model,connection));
     }
     public ResolvedModelConfig diagnosticModel(String id) {
         var a=scope(true);

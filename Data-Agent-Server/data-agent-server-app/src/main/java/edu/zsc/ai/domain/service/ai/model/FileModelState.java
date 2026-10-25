@@ -42,6 +42,8 @@ public final class FileModelState {
             return new Model(id,code,connectionId,name,modelId,capabilityProfile,options,maxContextTokens,memoryThreshold,chatVisible,version,enabled,tokenLimits,preset);
         }
     }
-    public record Binding(String modelConfigId, long version) {}
+    public record Binding(String modelConfigId, long version, MultiProviderProperties.ThinkingMode thinkingMode) {
+        public Binding(String modelConfigId,long version){this(modelConfigId,version,null);}
+    }
     @Override public String toString() { return "FileModelState[redacted]"; }
 }

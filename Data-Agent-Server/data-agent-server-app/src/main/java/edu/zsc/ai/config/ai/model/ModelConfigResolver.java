@@ -2,6 +2,7 @@ package edu.zsc.ai.config.ai.model;
 
 import edu.zsc.ai.common.enums.org.WorkspaceTypeEnum;
 import edu.zsc.ai.domain.service.org.OrgAccessService;
+import edu.zsc.ai.domain.service.ai.model.ModelThinkingOptions;
 import java.util.EnumMap;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
@@ -17,11 +18,14 @@ public class ModelConfigResolver {
 
     public boolean enabled() { return repository.enabled(); }
     public ModelRunSnapshot resolveRun(String modelConfigId, String legacyName) {
+        return resolveRun(modelConfigId,legacyName,null);
+    }
+    public ModelRunSnapshot resolveRun(String modelConfigId,String legacyName,MultiProviderProperties.ThinkingMode thinkingMode) {
         ModelAccessContext access = ModelAccessContext.current();
         authorize(access);
-        return repository.inSnapshot(access, () -> resolveRun(access,modelConfigId,legacyName));
+        return repository.inSnapshot(access, () -> resolveRun(access,modelConfigId,legacyName,thinkingMode));
     }
-    private ModelRunSnapshot resolveRun(ModelAccessContext access,String modelConfigId,String legacyName) {
+    private ModelRunSnapshot resolveRun(ModelAccessContext access,String modelConfigId,String legacyName,MultiProviderProperties.ThinkingMode thinkingMode) {
         String alias = blank(legacyName) ? null : repository.alias(access, legacyName.trim());
         // Older clients echo modelName from /models. In routed mode it is a scoped configuration ID.
         if (alias == null && !blank(legacyName) && repository.find(legacyName) != null) alias = legacyName;
@@ -33,6 +37,7 @@ public class ModelConfigResolver {
             String id = purpose == ModelPurpose.MAIN_CHAT ? mainId : repository.binding(access, purpose);
             ResolvedModelConfig config = resolve(id, access, purpose);
             if (purpose == ModelPurpose.MAIN_CHAT && !config.chatVisible()) throw ModelIntegrationException.unavailable();
+            if (purpose == ModelPurpose.MAIN_CHAT) config=ModelThinkingOptions.forRequest(config,thinkingMode);
             models.put(purpose, config);
         }
         return new ModelRunSnapshot(models, repository.maxCallsPerRun());

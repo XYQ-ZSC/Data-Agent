@@ -22,6 +22,8 @@ import { I18N_KEYS } from '../../constants/i18nKeys';
 import type { ChatContext, ChatMessage, ChatUserMention } from '../../types/chat';
 import { MessageBlockType, MessageRole } from '../../types/chat';
 import type { ModelOption } from '../../types/ai';
+import type { ThinkingMode } from '../../types/modelManagement';
+import { chatThinkingRequest } from '../../lib/chatThinking';
 import { findMentionTokens } from './mentionTypes';
 import { chatMessagesToMessages } from './MessageList';
 import { extractPlansFromMessages } from './blocks/exitPlanModeTypes';
@@ -75,6 +77,7 @@ export function AIAssistant({ onClosePanel, historyAsLeftSidebar = false }: AIAs
   const [agent, setAgentState] = useState<AgentType>(DEFAULT_AGENT);
   const [modelOptions, setModelOptions] = useState<ModelOption[]>(FALLBACK_MODELS);
   const [model, setModelState] = useState<string>(DEFAULT_MODEL);
+  const [thinkingMode, setThinkingModeState] = useState<ThinkingMode | undefined>();
   const [chatContext, setChatContext] = useState<ChatContext>({});
   const [userMentions, setUserMentionsState] = useState<ChatUserMention[]>([]);
   const userMentionsRef = useRef<ChatUserMention[]>([]);
@@ -125,6 +128,7 @@ export function AIAssistant({ onClosePanel, historyAsLeftSidebar = false }: AIAs
     api: ChatPaths.STREAM,
     body: {
       ...modelRequest(model, modelOptions),
+      ...chatThinkingRequest(modelOptions.find((option) => option.modelName === model), thinkingMode),
       language: i18n.resolvedLanguage ?? i18n.language ?? 'en',
       agentType: agent,
       ...(chatContext.connectionId != null && { connectionId: chatContext.connectionId }),
@@ -160,24 +164,29 @@ export function AIAssistant({ onClosePanel, historyAsLeftSidebar = false }: AIAs
     if (prefs) {
       setAgentState(prefs.agent as AgentType);
       setModelState(prefs.model);
+      setThinkingModeState(prefs.thinkingMode);
     } else {
       setAgentState(DEFAULT_AGENT);
       setModelState(defaultModelSelection(modelOptions));
+      setThinkingModeState(undefined);
     }
   }, [activeConversationId, getActivePrefs, modelOptions]);
 
   // Setters that also persist the choice into the active runtime
   const setAgent = useCallback((value: AgentType) => {
     setAgentState(value);
-    const current = getActivePrefs() ?? { agent: DEFAULT_AGENT, model: DEFAULT_MODEL };
-    setActivePrefs({ ...current, agent: value });
-  }, [getActivePrefs, setActivePrefs]);
+    setActivePrefs({ agent: value, model, thinkingMode });
+  }, [model, thinkingMode, setActivePrefs]);
 
   const setModel = useCallback((value: string) => {
     setModelState(value);
-    const current = getActivePrefs() ?? { agent: DEFAULT_AGENT, model: DEFAULT_MODEL };
-    setActivePrefs({ ...current, model: value });
-  }, [getActivePrefs, setActivePrefs]);
+    setActivePrefs({ agent, model: value, thinkingMode });
+  }, [agent, thinkingMode, setActivePrefs]);
+
+  const setThinkingMode = useCallback((value: ThinkingMode) => {
+    setThinkingModeState(value);
+    setActivePrefs({ agent, model, thinkingMode: value });
+  }, [agent, model, setActivePrefs]);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const chatInputAnchorRef = useRef<HTMLDivElement>(null);
@@ -207,6 +216,7 @@ export function AIAssistant({ onClosePanel, historyAsLeftSidebar = false }: AIAs
   useEffect(() => {
     let active = true;
     setModelOptions([]);
+    setThinkingModeState(undefined);
     aiService.getModels(true).then((list) => {
       if (!active) return;
       setModelOptions(list);
@@ -244,14 +254,16 @@ export function AIAssistant({ onClosePanel, historyAsLeftSidebar = false }: AIAs
   const resetToDefaults = useCallback(() => {
     setAgentState(DEFAULT_AGENT);
     setModelState(defaultModelSelection(modelOptions));
+    setThinkingModeState(undefined);
   }, [modelOptions]);
 
   const handleNewChat = useCallback(() => {
     resetToDefaults();
     setActiveConversation(null);
+    setActivePrefs({ agent: DEFAULT_AGENT, model: defaultModelSelection(modelOptions) });
     loadMessages(null, []);
     setConversationTokenCount(null, null);
-  }, [loadMessages, resetToDefaults, setActiveConversation, setConversationTokenCount]);
+  }, [loadMessages, resetToDefaults, setActiveConversation, setConversationTokenCount, setActivePrefs, modelOptions]);
 
   const handleSelectConversationFromHistory = useCallback(
     async (c: Conversation) => {
@@ -315,7 +327,7 @@ export function AIAssistant({ onClosePanel, historyAsLeftSidebar = false }: AIAs
     enqueueMessage: submitMessage,
     isLoading,
     conversationId: persistedConversationId,
-    modelState: { model, setModel, modelOptions },
+    modelState: { model, setModel, modelOptions, thinkingMode, setThinkingMode },
     agentState: { agent, setAgent },
     chatContextState: { chatContext, setChatContext },
     mentionState: { userMentions, setUserMentions },
@@ -324,10 +336,7 @@ export function AIAssistant({ onClosePanel, historyAsLeftSidebar = false }: AIAs
     latestPlanTabId: latestPlanTabId_,
     onCommand: (id: string) => {
       if (id === SLASH_COMMAND_IDS.NEW) {
-        resetToDefaults();
-        setActiveConversation(null);
-        loadMessages(null, []);
-        setConversationTokenCount(null, null);
+        handleNewChat();
       } else if (id === SLASH_COMMAND_IDS.HISTORY) {
         if (historyAsLeftSidebar) {
           setHistorySidebarOpen(true);

@@ -120,15 +120,219 @@ class FileModelManagementTest {
     @Test void taskPresetsAreReusedAcrossPurposesAndCanBecomeTheActualMainChatModel() {
         var first=service.saveSetup(setup(null,null,"task-reuse-key","qwen3.8-max",false,null));
         var explorer=selectPreset(ModelPurpose.EXPLORER,first.connection(),"qwen3.6-flash");var oldRun=resolver.resolveRun(null,null);
-        assertTrue(resolver.listAvailable().stream().noneMatch(model->model.modelId().equals("qwen3.6-flash")));
+        assertTrue(resolver.listAvailable().stream().noneMatch(model->model.modelConfigId().equals(explorer.modelConfigId())));
+        assertEquals(4,resolver.listAvailable().size()); // Read-only chat choices already include this upstream model.
         var planner=selectPreset(ModelPurpose.PLANNER,first.connection(),"qwen3.6-flash");assertEquals(explorer.modelConfigId(),planner.modelConfigId());
         var main=selectPreset(ModelPurpose.MAIN_CHAT,first.connection(),"qwen3.6-flash");assertEquals(explorer.modelConfigId(),main.modelConfigId());
         assertTrue(service.model(main.modelConfigId()).chatVisible());assertTrue(service.model(main.modelConfigId()).taskPreset());
         assertTrue(resolver.listAvailable().stream().anyMatch(model->model.modelId().equals("qwen3.6-flash")));
+        assertEquals(4,resolver.listAvailable().size()); // Promoting a saved task model replaces its virtual choice.
         assertEquals(first.model().id(),selectPreset(ModelPurpose.EXPLORER,first.connection(),"qwen3.8-max").modelConfigId());
         assertEquals("qwen3.6-flash",oldRun.model(ModelPurpose.EXPLORER).modelId());
         assertEquals("qwen3.6-flash",resolver.resolveRun(null,null).model(ModelPurpose.MAIN_CHAT).modelId());
         assertEquals(2,service.models().size());
+    }
+    @Test void oneQwenConnectionExposesFourCallableChatChoicesWithoutWritingModelsOrBindings() throws Exception {
+        var first=service.saveSetup(setup(null,null,"chat-choice-key","qwen3.8-max",false,null));
+        var path=temporary.resolve("PERSONAL/1/models.json");String before=Files.readString(path);
+        var bindings=service.bindings();
+        var mvc=MockMvcBuilders.standaloneSetup(new AiConfigController(mock(AiModelCatalog.class),resolver)).build();
+        String response=mvc.perform(get("/api/ai/models")).andExpect(status().isOk()).andExpect(jsonPath("$.data.length()").value(4))
+                .andExpect(jsonPath("$.data[0].modelId").value("qwen3.8-max")).andReturn().getResponse().getContentAsString();
+        assertFalse(response.contains("chat-choice-key"));assertFalse(response.contains("credentialRef"));
+        var choices=resolver.listAvailable();
+        assertEquals(QwenModelSpecifications.all().stream().map(QwenModelSpecifications.Specification::modelId).toList(),choices.stream().map(ResolvedModelConfig::modelId).toList());
+        assertEquals(4,choices.stream().map(ResolvedModelConfig::modelConfigId).distinct().count());
+        var factory=mock(ModelClientFactory.class);when(factory.supports(any())).thenReturn(true);
+        when(factory.create(any())).thenAnswer(invocation->{
+            ResolvedModelConfig selected=invocation.getArgument(0);
+            ChatModel chat=new ChatModel(){@Override public ChatResponse chat(ChatRequest request){
+                return ChatResponse.builder().aiMessage(AiMessage.from(selected.modelId())).finishReason(dev.langchain4j.model.output.FinishReason.STOP).build();
+            }};
+            return new ModelClientBundle(chat,mock(StreamingChatModel.class));
+        });
+        var clients=new ModelClientRegistry(List.of(factory),resolver,credentials);
+        for(var choice:choices) {
+            var run=resolver.resolveRun(choice.modelConfigId(),null);var selected=run.model(ModelPurpose.MAIN_CHAT);
+            assertEquals(choice.modelId(),selected.modelId());assertEquals(first.connection().id(),selected.connectionId());
+            assertEquals(1_000_000,selected.maxContextTokens());assertEquals(8192,selected.options().maxOutputTokens());
+            assertEquals("chat-choice-key",credentials.withSecret(selected,key->key));
+            for(var purpose:ModelPurpose.values())if(purpose!=ModelPurpose.MAIN_CHAT)assertEquals(first.model().id(),run.model(purpose).modelConfigId());
+            assertEquals(choice.modelId(),clients.clients(run,ModelPurpose.MAIN_CHAT).chatModel().chat(ChatRequest.builder().messages(UserMessage.from("hello")).build()).aiMessage().text());
+        }
+        assertEquals(bindings,service.bindings());assertEquals(1,service.models().size());assertEquals(before,Files.readString(path));
+    }
+    @Test void taskThinkingSwitchesAreIndependentAndReachTheActualProtocolWithoutEditingTheSharedModel() throws Exception {
+        var first=service.saveSetup(setup(null,null,"thinking-fixture","qwen3.8-max",false,null));
+        var previous=resolver.resolveRun(null,null);
+        var mvc=MockMvcBuilders.standaloneSetup(new ModelManagementController(service,diagnostics,mock(ModelConnectionTestService.class))).setControllerAdvice(new ModelManagementErrorHandler()).build();
+        mvc.perform(put("/api/ai/model-bindings/PLANNER").contentType("application/json")
+                .content(ModelManagementJson.write(new ModelManagementRequests.Binding(1L,first.model().id(),MultiProviderProperties.ThinkingMode.ENABLED))))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.thinkingMode").value("ENABLED"))
+                .andExpect(jsonPath("$.data.thinkingModes[0]").value("DISABLED")).andExpect(jsonPath("$.data.thinkingModes[1]").value("ENABLED"));
+        service.bind(ModelPurpose.COMPRESSION,new ModelManagementRequests.Binding(1L,first.model().id(),MultiProviderProperties.ThinkingMode.ENABLED));
+        var run=resolver.resolveRun(null,null);
+        for(var purpose:ModelPurpose.values()) {
+            boolean enabled=purpose==ModelPurpose.PLANNER || purpose==ModelPurpose.COMPRESSION;
+            assertEquals(enabled?MultiProviderProperties.ThinkingMode.ENABLED:MultiProviderProperties.ThinkingMode.DISABLED,run.model(purpose).options().thinkingMode());
+            assertEquals(MultiProviderProperties.ThinkingMode.DISABLED,previous.model(purpose).options().thinkingMode());
+            var client=new OpenAiChatClientFactory(credentials).create(run.model(purpose));
+            var parameters=(dev.langchain4j.model.openai.OpenAiChatRequestParameters)client.chatModel().defaultRequestParameters();
+            assertEquals(enabled,parameters.customParameters().get("enable_thinking"));
+        }
+        assertEquals(8192,run.model(ModelPurpose.COMPRESSION).options().maxOutputTokens());
+        service.bind(ModelPurpose.COMPRESSION,new ModelManagementRequests.Binding(2L,first.model().id(),MultiProviderProperties.ThinkingMode.DISABLED));
+        assertEquals(2048,resolver.resolveRun(null,null).model(ModelPurpose.COMPRESSION).options().maxOutputTokens());
+        assertEquals(first.model(),service.model(first.model().id()));assertEquals(1,service.models().size());
+        assertEquals(first.connection(),service.connection(first.connection().id()));
+        resolver.reauthorize(previous.model(ModelPurpose.PLANNER)); // In-flight options remain immutable.
+        var before=Files.readString(temporary.resolve("PERSONAL/1/models.json"));
+        mvc.perform(put("/api/ai/model-bindings/PLANNER").contentType("application/json")
+                .content(ModelManagementJson.write(new ModelManagementRequests.Binding(1L,first.model().id(),MultiProviderProperties.ThinkingMode.DISABLED))))
+                .andExpect(status().isConflict());
+        assertEquals(before,Files.readString(temporary.resolve("PERSONAL/1/models.json")));
+    }
+    @Test void conversationThinkingOverridesOnlyTheCurrentMainRequestAndNeverWritesWorkspaceDefaults() throws Exception {
+        var first=service.saveSetup(setup(null,null,"conversation-thinking","qwen3.8-max",false,null));
+        var path=temporary.resolve("PERSONAL/1/models.json");String before=Files.readString(path);
+        var original=resolver.resolveRun(null,null);var defaults=service.bindings();
+        for(var choice:resolver.listAvailable()) {
+            var thinking=resolver.resolveRun(choice.modelConfigId(),null,MultiProviderProperties.ThinkingMode.ENABLED);
+            var ordinary=resolver.resolveRun(choice.modelConfigId(),null,MultiProviderProperties.ThinkingMode.DISABLED);
+            assertEquals(MultiProviderProperties.ThinkingMode.ENABLED,thinking.model(ModelPurpose.MAIN_CHAT).options().thinkingMode());
+            assertEquals(MultiProviderProperties.ThinkingMode.DISABLED,ordinary.model(ModelPurpose.MAIN_CHAT).options().thinkingMode());
+            for(var purpose:ModelPurpose.values())if(purpose!=ModelPurpose.MAIN_CHAT)assertEquals(original.model(purpose),thinking.model(purpose));
+            var parameters=(dev.langchain4j.model.openai.OpenAiChatRequestParameters)new OpenAiChatClientFactory(credentials)
+                    .create(thinking.model(ModelPurpose.MAIN_CHAT)).chatModel().defaultRequestParameters();
+            assertEquals(true,parameters.customParameters().get("enable_thinking"));
+            var plain=(dev.langchain4j.model.openai.OpenAiChatRequestParameters)new OpenAiChatClientFactory(credentials)
+                    .create(ordinary.model(ModelPurpose.MAIN_CHAT)).chatModel().defaultRequestParameters();
+            assertEquals(false,plain.customParameters().get("enable_thinking"));
+            resolver.reauthorize(thinking.model(ModelPurpose.MAIN_CHAT));
+        }
+        assertEquals(MultiProviderProperties.ThinkingMode.DISABLED,original.model(ModelPurpose.MAIN_CHAT).options().thinkingMode());
+        assertEquals(defaults,service.bindings());assertEquals(first.model(),service.model(first.model().id()));assertEquals(before,Files.readString(path));
+    }
+    @Test void conversationThinkingMetadataAndRuntimeEnforceCapabilitiesAndWorkspaceUseRights() {
+        var plainConnection=connection("plain-conversation");var plain=model(plainConnection,"plain-conversation");bindAll(plain.id());
+        var options=new AiConfigController(mock(AiModelCatalog.class),resolver).listModels().getData();
+        assertEquals(List.of(MultiProviderProperties.ThinkingMode.DISABLED),options.get(0).getThinkingModes());assertFalse(options.get(0).isSupportThinking());
+        assertEquals("MODEL_CAPABILITY_UNSUPPORTED",assertThrows(ModelIntegrationException.class,()->resolver.resolveRun(plain.id(),null,MultiProviderProperties.ThinkingMode.ENABLED)).getReason());
+        organization(8,90);var first=service.saveSetup(setup(null,null,"member-thinking","qwen3.8-max",false,null));
+        when(organizations.loadActiveMembership(8,90)).thenReturn(new OrgMemberContext(90,8,OrganizationRoleEnum.COMMON));
+        assertFalse(service.status().canManage());
+        var choice=resolver.listAvailable().stream().filter(c->c.modelId().equals("qwen-plus")).findFirst().orElseThrow();
+        assertEquals(MultiProviderProperties.ThinkingMode.ENABLED,resolver.resolveRun(choice.modelConfigId(),null,MultiProviderProperties.ThinkingMode.ENABLED).model(ModelPurpose.MAIN_CHAT).options().thinkingMode());
+        assertThrows(ModelIntegrationException.class,()->resolver.resolveRun(choice.modelConfigId(),null,MultiProviderProperties.ThinkingMode.ADAPTIVE));
+        assertEquals(MultiProviderProperties.ThinkingMode.DISABLED,service.bindings().get(0).thinkingMode());
+        personal(2);assertThrows(ModelIntegrationException.class,()->resolver.resolveRun(first.model().id(),null,MultiProviderProperties.ThinkingMode.ENABLED));
+    }
+    @Test void switchingQwenTaskPresetsPreservesThinkingAndTheMainPreferenceAlsoAppliesToChatCandidates() {
+        var first=service.saveSetup(setup(null,null,"thinking-presets","qwen3.8-max",false,null));
+        service.bindPreset(ModelPurpose.EXPLORER,new ModelManagementRequests.PresetBinding(1L,first.connection().id(),first.connection().version(),"qwen3.6-flash",MultiProviderProperties.ThinkingMode.ENABLED));
+        assertEquals(MultiProviderProperties.ThinkingMode.ENABLED,resolver.resolveRun(null,null).model(ModelPurpose.EXPLORER).options().thinkingMode());
+        var next=selectPreset(ModelPurpose.EXPLORER,first.connection(),"qwen-plus");
+        assertEquals(MultiProviderProperties.ThinkingMode.ENABLED,next.thinkingMode());
+        var run=resolver.resolveRun(null,null);
+        assertEquals("qwen-plus",run.model(ModelPurpose.EXPLORER).modelId());
+        assertEquals(MultiProviderProperties.ThinkingMode.ENABLED,run.model(ModelPurpose.EXPLORER).options().thinkingMode());
+        assertEquals(MultiProviderProperties.ThinkingMode.DISABLED,run.model(ModelPurpose.PLANNER).options().thinkingMode());
+        service.bind(ModelPurpose.MAIN_CHAT,new ModelManagementRequests.Binding(1L,first.model().id(),MultiProviderProperties.ThinkingMode.ENABLED));
+        for(var choice:resolver.listAvailable())assertEquals(MultiProviderProperties.ThinkingMode.ENABLED,resolver.resolveRun(choice.modelConfigId(),null).model(ModelPurpose.MAIN_CHAT).options().thinkingMode());
+        assertEquals(MultiProviderProperties.ThinkingMode.DISABLED,service.model(first.model().id()).defaultOptions().getThinkingMode());
+    }
+    @Test void thinkingOverridesValidateCapabilitiesPermissionsAndKeepOldBindingFilesCompatible() throws Exception {
+        var first=service.saveSetup(setup(null,null,"legacy-thinking","qwen3.8-max",false,null));
+        var path=temporary.resolve("PERSONAL/1/models.json");
+        var tree=ModelManagementJson.read(Files.readString(path),com.fasterxml.jackson.databind.node.ObjectNode.class);
+        tree.path("bindings").forEach(binding->((com.fasterxml.jackson.databind.node.ObjectNode)binding).remove("thinkingMode"));
+        Files.writeString(path,ModelManagementJson.write(tree));
+        assertTrue(service.bindings().stream().allMatch(binding->binding.thinkingMode()==MultiProviderProperties.ThinkingMode.DISABLED));
+        assertEquals(MultiProviderProperties.ThinkingMode.DISABLED,resolver.resolveRun(null,null).model(ModelPurpose.MAIN_CHAT).options().thinkingMode());
+        assertEquals(1,ModelManagementJson.read(Files.readString(path),FileModelState.class).formatVersion);
+        var connection=connection("plain-thinking");var plain=model(connection,"plain-thinking");
+        var before=Files.readString(path);
+        assertThrows(ModelManagementException.class,()->service.bind(ModelPurpose.PLANNER,new ModelManagementRequests.Binding(1L,plain.id(),MultiProviderProperties.ThinkingMode.ENABLED)));
+        assertThrows(ModelManagementException.class,()->service.bindPreset(ModelPurpose.EXPLORER,new ModelManagementRequests.PresetBinding(1L,first.connection().id(),first.connection().version(),"qwen-plus",MultiProviderProperties.ThinkingMode.ADAPTIVE)));
+        assertEquals(before,Files.readString(path));
+        personal(2);assertThrows(ModelManagementException.class,()->service.bind(ModelPurpose.PLANNER,new ModelManagementRequests.Binding(0L,first.model().id(),MultiProviderProperties.ThinkingMode.ENABLED)));
+        organization(8,90);when(organizations.loadActiveMembership(8,90)).thenReturn(new OrgMemberContext(90,8,OrganizationRoleEnum.COMMON));
+        assertEquals("MODEL_MANAGEMENT_FORBIDDEN",assertThrows(ModelManagementException.class,()->service.bind(ModelPurpose.PLANNER,new ModelManagementRequests.Binding(1L,first.model().id(),MultiProviderProperties.ThinkingMode.ENABLED))).getMessage());
+    }
+    @Test void taskThinkingSupportsRequiredReasoningAndAnthropicAdaptiveOrManualModes() {
+        var connection=connection("reasoning-modes");
+        var options=new MultiProviderProperties.Options();options.setThinkingMode(MultiProviderProperties.ThinkingMode.ENABLED);
+        var reasoning=service.createModel(new ModelManagementRequests.Model(null,"required",connection.id(),"Required","reasoning-model","responses-reasoning-v1",options,32768,24000,true,true));
+        bindAll(reasoning.id());
+        assertEquals(List.of(MultiProviderProperties.ThinkingMode.ENABLED),service.bindings().get(0).thinkingModes());
+        assertThrows(ModelManagementException.class,()->service.bind(ModelPurpose.PLANNER,new ModelManagementRequests.Binding(1L,reasoning.id(),MultiProviderProperties.ThinkingMode.DISABLED)));
+        var anthropic=service.createConnection(new ModelManagementRequests.Connection(null,"anthropic-task","Anthropic","ANTHROPIC",ModelApiStyle.ANTHROPIC_MESSAGES,
+                "https://api.anthropic.com/v1","anthropic-messages-v1","anthropic-fixture",true));
+        for(String profile:List.of("anthropic-adaptive-v1","anthropic-thinking-v1")) {
+            var defaults=new MultiProviderProperties.Options();defaults.setTemperature(0.5);
+            var model=service.createModel(new ModelManagementRequests.Model(null,profile,anthropic.id(),profile,"claude-test",profile,defaults,32768,24000,true,true));
+            var mode=profile.contains("adaptive")?MultiProviderProperties.ThinkingMode.ADAPTIVE:MultiProviderProperties.ThinkingMode.ENABLED;
+            long version=service.bindings().stream().filter(b->b.purpose()==ModelPurpose.PLANNER).findFirst().orElseThrow().version();
+            service.bind(ModelPurpose.PLANNER,new ModelManagementRequests.Binding(version,model.id(),mode));
+            var selected=resolver.resolveRun(null,null).model(ModelPurpose.PLANNER);
+            assertEquals(mode,selected.options().thinkingMode());assertNull(selected.options().temperature());
+            assertEquals(profile.contains("adaptive")?null:1024,selected.options().thinkingBudget());
+            service.bind(ModelPurpose.PLANNER,new ModelManagementRequests.Binding(version+1,model.id(),MultiProviderProperties.ThinkingMode.DISABLED));
+            selected=resolver.resolveRun(null,null).model(ModelPurpose.PLANNER);
+            assertEquals(MultiProviderProperties.ThinkingMode.DISABLED,selected.options().thinkingMode());assertNull(selected.options().thinkingBudget());assertEquals(0.5,selected.options().temperature());
+        }
+    }
+    @Test void chatChoicesUseEachConnectionsKeyAndRespectWorkspaceAndOrganizationUsePermissions() throws Exception {
+        var first=service.saveSetup(setup(null,null,"first-chat-key","qwen3.8-max",false,null));
+        var second=service.saveSetup(setup(null,null,"second-chat-key","qwen3.8-max",false,null));
+        var choices=resolver.listAvailable();assertEquals(8,choices.size());
+        for(var choice:choices) {
+            var selected=resolver.resolveRun(choice.modelConfigId(),null).model(ModelPurpose.MAIN_CHAT);
+            assertEquals(choice.connectionId().equals(first.connection().id())?"first-chat-key":"second-chat-key",credentials.withSecret(selected,key->key));
+        }
+        String foreign=choices.stream().filter(c->c.modelId().equals("qwen-plus")).findFirst().orElseThrow().modelConfigId();
+        personal(2);assertTrue(resolver.listAvailable().isEmpty());assertThrows(ModelIntegrationException.class,()->resolver.resolveRun(foreign,null));
+        organization(8,90);var shared=service.saveSetup(setup(null,null,"shared-chat-key","qwen3.8-max",false,null));
+        var path=temporary.resolve("ORGANIZATION/90/models.json");String before=Files.readString(path);
+        when(organizations.loadActiveMembership(8,90)).thenReturn(new OrgMemberContext(90,8,OrganizationRoleEnum.COMMON));
+        assertEquals(4,resolver.listAvailable().size());assertFalse(service.status().canManage());assertThrows(ModelManagementException.class,service::connections);
+        for(var choice:resolver.listAvailable()) {
+            var selected=resolver.resolveRun(choice.modelConfigId(),null).model(ModelPurpose.MAIN_CHAT);
+            assertEquals(shared.connection().id(),selected.connectionId());assertEquals("shared-chat-key",credentials.withSecret(selected,key->key));
+        }
+        assertEquals(before,Files.readString(path));assertNotEquals(first.connection().id(),second.connection().id());
+        when(organizations.loadActiveMembership(8,90)).thenThrow(new IllegalStateException("membership revoked"));
+        assertThrows(ModelIntegrationException.class,resolver::listAvailable);
+    }
+    @Test void virtualChatChoicesAreRevokedWhenTheSourceIsDisabledOrItsKeyIsReplaced() {
+        var first=service.saveSetup(setup(null,null,"old-chat-key","qwen3.8-max",false,null));
+        var choice=resolver.listAvailable().stream().filter(c->c.modelId().equals("qwen-plus")).findFirst().orElseThrow();
+        var snapshot=resolver.resolveRun(choice.modelConfigId(),null).model(ModelPurpose.MAIN_CHAT);
+        var changed=service.credential(first.connection().id(),new ModelManagementRequests.Credential(first.connection().version(),"REPLACE","new-chat-key"));
+        assertThrows(ModelIntegrationException.class,()->resolver.reauthorize(snapshot));
+        var latest=resolver.resolveRun(choice.modelConfigId(),null).model(ModelPurpose.MAIN_CHAT);
+        assertEquals("new-chat-key",credentials.withSecret(latest,key->key));
+        service.disableModel(first.model().id(),new ModelManagementRequests.Version(first.model().version()));
+        assertTrue(resolver.listAvailable().isEmpty());assertNull(repository.find(choice.modelConfigId()));
+        assertThrows(ModelIntegrationException.class,()->resolver.reauthorize(latest));
+        assertTrue(service.connection(changed.id()).enabled()); // The disabled source itself gates its virtual choices.
+    }
+    @Test void chatPresetIdsCannotOverrideAnArbitraryModelOrGrantAHiddenOrNonQwenConnection() {
+        var first=service.saveSetup(setup(null,null,"restricted-chat-key","qwen3.8-max",false,null));
+        for(String id:List.of("qwen-preset/"+first.model().id()+"/unlisted-model","qwen-preset/"+first.connection().id()+"/qwen-plus",
+                "qwen-preset/"+first.model().id()+"/qwen-plus/extra","qwen-preset/../qwen-plus")) {
+            assertNull(repository.find(id));assertThrows(ModelIntegrationException.class,()->resolver.resolveRun(id,null));
+        }
+        var hidden=service.createModel(new ModelManagementRequests.Model(null,"hidden-plus",first.connection().id(),"Hidden plus","qwen-plus","qwen-tools-v1",
+                new MultiProviderProperties.Options(),1_000_000,24000,false,true));
+        assertEquals(3,resolver.listAvailable().size());
+        assertNull(repository.find("qwen-preset/"+first.model().id()+"/qwen-plus"));
+        var task=selectPreset(ModelPurpose.EXPLORER,first.connection(),"qwen3.6-flash");
+        assertNull(repository.find("qwen-preset/"+task.modelConfigId()+"/qwen-plus"));
+        var openai=connection("other-api");var other=model(openai,"other-model");
+        assertNull(repository.find("qwen-preset/"+other.id()+"/qwen-plus"));
+        service.disableModel(hidden.id(),new ModelManagementRequests.Version(hidden.version()));
+        assertTrue(resolver.listAvailable().stream().noneMatch(c->c.modelId().equals("qwen-plus")));
     }
     @Test void staleOrInvalidPresetBindingsCannotLeaveOrphanVariantsOrCrossWorkspaces() throws Exception {
         var first=service.saveSetup(setup(null,null,"task-guard-key","qwen3.8-max",false,null));

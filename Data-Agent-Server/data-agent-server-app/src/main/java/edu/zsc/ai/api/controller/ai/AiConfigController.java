@@ -28,13 +28,16 @@ public class AiConfigController {
     public ApiResponse<List<ModelOptionResponse>> listModels() {
         if (modelConfigResolver.enabled()) {
             return ApiResponse.success(modelConfigResolver.listAvailable().stream().map(c -> ModelOptionResponse.builder()
-                    .modelName(c.modelConfigId()).modelConfigId(c.modelConfigId()).name(c.name()).provider(c.provider())
+                    .modelName(c.modelConfigId()).modelConfigId(c.modelConfigId()).modelId(c.modelId()).name(c.name()).provider(c.provider())
+                    .compatibilityProfile(c.compatibilityProfile())
                     .apiStyle(c.apiStyle().name()).defaultModel(modelConfigResolver.isDefault(c)).supportThinking(edu.zsc.ai.config.ai.model.ProviderCompatibilityPolicy.supportsThinking(c.capabilityProfile()))
+                    .thinkingMode(c.options().thinkingMode()).thinkingModes(edu.zsc.ai.domain.service.ai.model.ModelThinkingOptions.modes(c.capabilityProfile(),c.apiStyle(),c.compatibilityProfile()))
                     .memoryThreshold(c.memoryThreshold()).maxContextTokens(c.maxContextTokens()).build()).toList());
         }
         List<ModelOptionResponse> list = aiModelCatalog.listChatVisibleModels().stream()
                 .map(m -> ModelOptionResponse.builder()
                         .modelName(m.getModelName())
+                        .modelId(m.getModelName()).provider("QWEN").compatibilityProfile("qwen-chat-v1")
                         .defaultModel(m.getModelName().equals(aiModelCatalog.defaultModelName()))
                         .supportThinking(m.isSupportThinking())
                         .memoryThreshold(m.getMemoryThreshold())

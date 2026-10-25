@@ -11,13 +11,17 @@ function normalizeModelOption(input: Partial<ModelOption>): ModelOption {
   return {
     modelName,
     modelConfigId: input.modelConfigId,
+    modelId: input.modelId,
     name: input.name,
     provider: input.provider,
     apiStyle: input.apiStyle,
+    compatibilityProfile: input.compatibilityProfile,
     defaultModel: input.defaultModel === true,
     supportThinking: typeof input.supportThinking === 'boolean'
       ? input.supportThinking
       : false,
+    thinkingMode: input.thinkingMode,
+    thinkingModes: input.thinkingModes,
     memoryThreshold: normalizePositiveNumber(input.memoryThreshold),
     maxContextTokens: normalizePositiveNumber(input.maxContextTokens),
   };

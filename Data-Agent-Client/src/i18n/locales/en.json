@@ -1093,6 +1093,18 @@
       "del": "Delete data from a table"
     }
   },
+  "chat_thinking": {
+    "label": "Thinking",
+    "on": "Thinking is on. Click to turn it off for the next message in this conversation.",
+    "off": "Thinking is off. Click to turn it on for the next message in this conversation.",
+    "required": "Thinking is always on for this model."
+  },
+  "chat_model_selector": {
+    "title": "Chat models",
+    "choose": "Choose a chat model",
+    "selected": "Current model",
+    "other_provider": "Other providers"
+  },
   "model_settings": {
     "title": "Model settings",
     "configure": "Configure models",

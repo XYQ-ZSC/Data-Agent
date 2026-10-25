@@ -19,5 +19,6 @@ describe('task model selectors', () => {
     expect(markup.match(/value="preset\/one\//g)).toHaveLength(15);
     for (const id of ['qwen3.8-max', 'qwen3.6-flash', 'qwen-plus', 'qwen3.5-plus']) expect(markup.match(new RegExp(`Qwen · ${id.replace(/\./g, '\\.')}`, 'g'))).toHaveLength(5);
     expect(markup).not.toContain('model_settings.unavailable');
+    expect(markup).not.toContain('type="checkbox"');
   });
 });

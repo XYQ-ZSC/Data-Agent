@@ -20,7 +20,10 @@ public final class ModelManagementResponses {
             this(id,code,connectionId,name,modelId,capabilityProfile,defaultOptions,maxContextTokens,memoryThreshold,chatVisible,version,enabled,available,null,false);
         }
     }
-    public record Binding(ModelPurpose purpose, String modelConfigId, long version) {}
+    public record Binding(ModelPurpose purpose, String modelConfigId, long version,
+                          MultiProviderProperties.ThinkingMode thinkingMode, List<MultiProviderProperties.ThinkingMode> thinkingModes) {
+        public Binding(ModelPurpose purpose,String modelConfigId,long version){this(purpose,modelConfigId,version,null,List.of());}
+    }
     public record Profile(ModelApiStyle apiStyle, String compatibilityProfile, String capabilityProfile,
                           List<MultiProviderProperties.ThinkingMode> thinkingModes, String resource) {}
     public record Test(String id, String modelConfigId, long configVersion, long connectionVersion, long credentialVersion,

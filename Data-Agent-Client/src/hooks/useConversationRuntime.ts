@@ -25,6 +25,7 @@ import {
 } from '../constants/chat';
 import { buildChatStreamFetchHeaders } from '../lib/chatStreamHeaders';
 import { isHiddenAskUserAnswerMessage } from '../components/ai/messageListLib/hiddenAskUserAnswer';
+import type { ThinkingMode } from '../types/modelManagement';
 
 interface QueuedMessage {
     text: string;
@@ -35,6 +36,7 @@ interface QueuedMessage {
 export interface ConversationPrefs {
     agent: string;
     model: string;
+    thinkingMode?: ThinkingMode;
 }
 
 const PREFS_STORAGE_KEY = 'conversation_prefs';
@@ -498,7 +500,6 @@ export function useConversationRuntime(
             // Prepare request (clientWorkspace last so stream always carries current org context)
             const request: ChatRequest = {
                 message: trimmed,
-                ...baseBody,
                 ...bodyOverrides,
                 ...clientWorkspace,
                 ...(isPersistedConversationId(runtime.conversationId) && { conversationId: runtime.conversationId }),
@@ -619,24 +620,26 @@ export function useConversationRuntime(
                 }
             }
         },
-        [api, baseBody, onResponse, onError, updateRuntimeMessages, consumeStreamIntoRuntime,
+        [api, onResponse, onError, updateRuntimeMessages, consumeStreamIntoRuntime,
             cancelWaiting, getRuntimeKey, touchRuntime, forceUpdate, allocateTempConversationId]
     );
 
     const submitMessage = useCallback(
         async (text: string, bodyOverrides?: Partial<ChatRequest>, submitOptions?: SubmitMessageOptions) => {
             const runtime = getOrCreateRuntime(activeConversationId);
+            // Freeze the selection now, including thinking, so queued messages do not reuse a previous request's body.
+            const requestBody = { ...baseBody, ...bodyOverrides };
 
             // If already submitting, add to queue
             if (runtime.submitting) {
-                runtime.queue = [...runtime.queue, { text: text.trim(), bodyOverrides, submitOptions }];
+                runtime.queue = [...runtime.queue, { text: text.trim(), bodyOverrides: requestBody, submitOptions }];
                 forceUpdate();
                 return;
             }
 
-            await submitMessageToRuntime(runtime, text, bodyOverrides, submitOptions);
+            await submitMessageToRuntime(runtime, text, requestBody, submitOptions);
         },
-        [activeConversationId, getOrCreateRuntime, submitMessageToRuntime, forceUpdate]
+        [activeConversationId, baseBody, getOrCreateRuntime, submitMessageToRuntime, forceUpdate]
     );
 
     const stop = useCallback(() => {

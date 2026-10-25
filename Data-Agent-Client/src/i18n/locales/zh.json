@@ -1094,6 +1094,18 @@
       "del": "删除表中的数据"
     }
   },
+  "chat_thinking": {
+    "label": "深度思考",
+    "on": "深度思考已开启，点击关闭；对当前会话的下一条消息生效。",
+    "off": "深度思考已关闭，点击开启；对当前会话的下一条消息生效。",
+    "required": "该模型始终开启思考模式。"
+  },
+  "chat_model_selector": {
+    "title": "对话模型",
+    "choose": "选择对话模型",
+    "selected": "当前模型",
+    "other_provider": "其他厂商"
+  },
   "model_settings": {
     "title": "模型配置",
     "configure": "配置模型",
