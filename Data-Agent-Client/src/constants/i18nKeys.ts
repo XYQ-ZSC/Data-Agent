@@ -447,6 +447,7 @@ export const I18N_KEYS = {
 
   // AI keys
   AI: {
+    NO_AVAILABLE_MODELS: 'ai.no_available_models',
     TITLE: 'ai.title',
     HISTORY: 'ai.history',
     HISTORY_TITLE: 'ai.history_title',

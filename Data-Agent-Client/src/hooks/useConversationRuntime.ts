@@ -2,6 +2,7 @@ import { useRef, useState, useCallback, useMemo, useEffect } from 'react';
 import { useAuthStore } from '../store/authStore';
 import { useWorkspaceStore } from '../store/workspaceStore';
 import { parseSSEResponse } from '../lib/sse';
+import { readModelRequestError } from '../lib/chatModelErrors';
 import {
     applyRefreshedTokens,
     clearAuthAndOpenLogin,
@@ -513,6 +514,14 @@ export function useConversationRuntime(
                 );
 
                 if (!response.ok) {
+                    const code = await readModelRequestError(response);
+                    if (code) {
+                        updateRuntimeMessages(runtime, [...runtime.messages, {
+                            id: safeMessageId(), role: MessageRole.ASSISTANT, content: '',
+                            blocks: [{ type: 'STATUS', data: code, done: false }],
+                            doneMetadata: { status: 'FAILED', errorCode: code }, createdAt: new Date(),
+                        }]);
+                    }
                     const err = new Error(`Stream request failed: ${response.status} ${response.statusText}`);
                     onError?.(err);
                     return;

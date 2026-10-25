@@ -14,7 +14,7 @@ import { useAuthStore } from '../../store/authStore';
 import { conversationService } from '../../services/conversation.service';
 import { aiService } from '../../services/ai.service';
 import { ChatPaths } from '../../constants/apiPaths';
-import { DEFAULT_MODEL, FALLBACK_MODELS } from '../../constants/models';
+import { DEFAULT_MODEL, FALLBACK_MODELS, modelRequest, defaultModelSelection } from '../../constants/models';
 import { ROUTES } from '../../constants/routes';
 import { resolveErrorMessage } from '../../lib/errorMessage';
 import { SLASH_COMMAND_IDS } from './slashCommands';
@@ -70,6 +70,7 @@ export function AIAssistant({ onClosePanel, historyAsLeftSidebar = false }: AIAs
   const { t, i18n } = useTranslation();
   const navigate = useNavigate();
   const accessToken = useAuthStore((s) => s.accessToken);
+  const modelScope = useAuthStore((s) => `${s.user?.id ?? ''}/${s.workspaceType}/${s.workspaceOrgId ?? ''}`);
 
   const [agent, setAgentState] = useState<AgentType>(DEFAULT_AGENT);
   const [modelOptions, setModelOptions] = useState<ModelOption[]>(FALLBACK_MODELS);
@@ -123,7 +124,7 @@ export function AIAssistant({ onClosePanel, historyAsLeftSidebar = false }: AIAs
   } = useConversationRuntime({
     api: ChatPaths.STREAM,
     body: {
-      model,
+      ...modelRequest(model, modelOptions),
       language: i18n.resolvedLanguage ?? i18n.language ?? 'en',
       agentType: agent,
       ...(chatContext.connectionId != null && { connectionId: chatContext.connectionId }),
@@ -161,9 +162,9 @@ export function AIAssistant({ onClosePanel, historyAsLeftSidebar = false }: AIAs
       setModelState(prefs.model);
     } else {
       setAgentState(DEFAULT_AGENT);
-      setModelState(DEFAULT_MODEL);
+      setModelState(defaultModelSelection(modelOptions));
     }
-  }, [activeConversationId, getActivePrefs]);
+  }, [activeConversationId, getActivePrefs, modelOptions]);
 
   // Setters that also persist the choice into the active runtime
   const setAgent = useCallback((value: AgentType) => {
@@ -204,26 +205,31 @@ export function AIAssistant({ onClosePanel, historyAsLeftSidebar = false }: AIAs
   }, [messages]);
 
   useEffect(() => {
+    let active = true;
+    setModelOptions([]);
     aiService.getModels(true).then((list) => {
+      if (!active) return;
+      setModelOptions(list);
       if (list.length > 0) {
-        setModelOptions(list);
         setModelState((current) => {
-          const exists = list.some((m) => m.modelName === current);
-          return exists ? current : list[0].modelName;
+          return list.some((option) => option.modelName === current) ? current : defaultModelSelection(list);
         });
+      } else {
+        setModelState('');
       }
     });
-  }, []);
+    return () => { active = false; };
+  }, [modelScope]);
 
   const handleSend = useCallback(() => {
-    if (!input.trim()) return;
+    if (!input.trim() || !modelOptions.some((m) => m.modelName === model)) return;
     const messageText = input.trim();
     const activeMentions = resolveMentionsInText(messageText, userMentionsRef.current);
     userHasScrolledUpRef.current = false;
     submitMessage(messageText, activeMentions.length > 0 ? { userMentions: activeMentions } : undefined);
     setInput('');
     setUserMentions([]);
-  }, [input, setInput, submitMessage, setUserMentions]);
+  }, [input, setInput, submitMessage, setUserMentions, modelOptions, model]);
 
   const chatMessages = chatMessagesToMessages(messages);
   const persistedConversationId =
@@ -237,8 +243,8 @@ export function AIAssistant({ onClosePanel, historyAsLeftSidebar = false }: AIAs
 
   const resetToDefaults = useCallback(() => {
     setAgentState(DEFAULT_AGENT);
-    setModelState(DEFAULT_MODEL);
-  }, []);
+    setModelState(defaultModelSelection(modelOptions));
+  }, [modelOptions]);
 
   const handleNewChat = useCallback(() => {
     resetToDefaults();
@@ -358,7 +364,7 @@ export function AIAssistant({ onClosePanel, historyAsLeftSidebar = false }: AIAs
           setIsCompacting(true);
 
           try {
-            const result = await conversationService.compact(targetConversationId, { model });
+            const result = await conversationService.compact(targetConversationId, modelRequest(model, modelOptions));
             if (!result.compressed) {
               loadMessages(targetConversationId, [
                 ...baseMessages,

@@ -20,7 +20,8 @@ class AiConfigControllerTest {
 
     private final AiModelProperties modelProperties = new AiModelProperties();
     private final AiModelCatalog aiModelCatalog = new AiModelCatalog(modelProperties);
-    private final AiConfigController controller = new AiConfigController(aiModelCatalog);
+    private final AiConfigController controller = new AiConfigController(aiModelCatalog,
+            org.mockito.Mockito.mock(edu.zsc.ai.config.ai.model.ModelConfigResolver.class));
 
     AiConfigControllerTest() {
         aiModelCatalog.initialize();
