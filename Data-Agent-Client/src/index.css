@@ -1020,3 +1020,27 @@
 .er-diagram-flow .er-drag-handle:active {
   cursor: grabbing;
 }
+
+.er-zoom-range {
+  height: 4px;
+  border-radius: 9999px;
+  background: var(--border-color);
+  accent-color: var(--accent-blue);
+  cursor: pointer;
+}
+
+.er-zoom-range:disabled {
+  cursor: default;
+}
+
+.er-diagram-flow .er-diagram-minimap {
+  overflow: hidden;
+}
+
+.er-diagram-flow .er-diagram-minimap .react-flow__minimap-svg {
+  cursor: grab;
+}
+
+.er-diagram-flow .er-diagram-minimap .react-flow__minimap-svg:active {
+  cursor: grabbing;
+}

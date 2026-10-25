@@ -40,8 +40,14 @@ export function visibleColumns<T extends { name: string }>(
   return columns.filter((column) => chosen.has(column.name));
 }
 
+/** Keeps table identity without XML control characters, so image export can serialize the diagram. */
 export function toNodeId(tableKey: string) {
-  return tableKey.split('\0').join('\u001f');
+  return encodeURIComponent(tableKey);
+}
+
+function storedNodeId(id: string) {
+  if (!id.includes('\u001f')) return id;
+  return toNodeId(id.split('\u001f').join('\0'));
 }
 
 export function layoutStorageKey(connectionId: string | number, catalog?: string | null, schema?: string | null) {
@@ -80,7 +86,7 @@ export function readStoredLayout(key: string, store: LayoutStore = defaultStore(
       const point = value as { x?: unknown; y?: unknown };
       if (typeof point.x !== 'number' || typeof point.y !== 'number') return;
       if (!Number.isFinite(point.x) || !Number.isFinite(point.y)) return;
-      layout[id] = { x: point.x, y: point.y };
+      layout[storedNodeId(id)] = { x: point.x, y: point.y };
     });
     return layout;
   } catch {
@@ -101,6 +107,105 @@ export function hasStoredLayout(layout: StoredLayout | null) {
   return !!layout && Object.keys(layout).length > 0;
 }
 
+const LAYOUT_ORIGIN = 24;
+const VIEW_PADDING = 32;
+
+export const ER_MIN_ZOOM = 0.08;
+export const ER_MAX_ZOOM = 1.8;
+export const ER_MINIMAP_WIDTH = 220;
+export const ER_MINIMAP_HEIGHT = 132;
+export const ER_ZOOM_BAR_HEIGHT = 32;
+export const ER_OVERVIEW_GAP = 8;
+/** Matches the margin on `.react-flow__panel`. */
+export const ER_PANEL_MARGIN = 15;
+/** Content may poke out this far before the minimap appears. */
+export const ER_MINIMAP_SHOW_SLACK = 12;
+/** Once shown, the minimap stays until every table is back inside this margin. */
+export const ER_MINIMAP_HIDE_SLACK = 4;
+
+export function formatZoomPercent(zoom: number) {
+  return `${Math.round(zoom * 100)}%`;
+}
+
+export function viewportShowsAllTables(
+  nodes: Array<{ x: number; y: number; width: number; height: number }>,
+  viewport: { x: number; y: number; zoom: number },
+  paneWidth: number,
+  paneHeight: number,
+  slack = ER_MINIMAP_SHOW_SLACK,
+) {
+  if (nodes.length === 0 || paneWidth <= 0 || paneHeight <= 0 || viewport.zoom <= 0) return true;
+  return nodes.every((node) => {
+    const left = viewport.x + node.x * viewport.zoom;
+    const top = viewport.y + node.y * viewport.zoom;
+    const right = left + node.width * viewport.zoom;
+    const bottom = top + node.height * viewport.zoom;
+    return left >= -slack
+      && top >= -slack
+      && right <= paneWidth + slack
+      && bottom <= paneHeight + slack;
+  });
+}
+
+export function minimapNeeded(
+  currentlyVisible: boolean,
+  nodes: Array<{ x: number; y: number; width: number; height: number }>,
+  viewport: { x: number; y: number; zoom: number },
+  paneWidth: number,
+  paneHeight: number,
+) {
+  const slack = currentlyVisible ? ER_MINIMAP_HIDE_SLACK : ER_MINIMAP_SHOW_SLACK;
+  return !viewportShowsAllTables(nodes, viewport, paneWidth, paneHeight, slack);
+}
+
+/** Moves the whole diagram so its top-left sits on a fixed origin. */
+export function normalizeLayout(points: LayoutPoint[], origin = LAYOUT_ORIGIN): LayoutPoint[] {
+  if (points.length === 0) return points;
+  const minX = Math.min(...points.map((point) => point.x));
+  const minY = Math.min(...points.map((point) => point.y));
+  const dx = origin - minX;
+  const dy = origin - minY;
+  if (dx === 0 && dy === 0) return points;
+  return points.map((point) => ({ ...point, x: point.x + dx, y: point.y + dy }));
+}
+
+export function layoutBounds(points: Array<{ x: number; y: number; width: number; height: number }>) {
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  points.forEach((point) => {
+    minX = Math.min(minX, point.x);
+    minY = Math.min(minY, point.y);
+    maxX = Math.max(maxX, point.x + point.width);
+    maxY = Math.max(maxY, point.y + point.height);
+  });
+  return { x: minX, y: minY, width: Math.max(0, maxX - minX), height: Math.max(0, maxY - minY) };
+}
+
+/**
+ * Fits every card into the window. Extra space stays below the diagram,
+ * so a short graph starts at the top instead of floating in the lower half.
+ */
+export function viewportForDiagram(
+  bounds: { x: number; y: number; width: number; height: number },
+  viewWidth: number,
+  viewHeight: number,
+): { x: number; y: number; zoom: number } | null {
+  if (viewWidth <= VIEW_PADDING * 2 || viewHeight <= VIEW_PADDING * 2) return null;
+  if (bounds.width <= 0 || bounds.height <= 0) return null;
+  const fit = Math.min(
+    (viewWidth - VIEW_PADDING * 2) / bounds.width,
+    (viewHeight - VIEW_PADDING * 2) / bounds.height,
+  );
+  const zoom = Math.min(1, Math.max(ER_MIN_ZOOM, fit));
+  return {
+    x: (viewWidth - bounds.width * zoom) / 2 - bounds.x * zoom,
+    y: VIEW_PADDING - bounds.y * zoom,
+    zoom,
+  };
+}
+
 export function mergeStoredPositions(points: LayoutPoint[], stored: StoredLayout | null): LayoutPoint[] {
   if (!stored) return points;
   return points.map((point) => {
@@ -110,9 +215,9 @@ export function mergeStoredPositions(points: LayoutPoint[], stored: StoredLayout
   });
 }
 
-function gridLayout(tables: ErTable[]): LayoutPoint[] {
+function gridLayout(tables: ErTable[], expandedIds: ReadonlySet<string>): LayoutPoint[] {
   const columns = Math.max(1, Math.ceil(Math.sqrt(Math.max(tables.length, 1))));
-  const heights = tables.map((table) => cardHeight(table.columns.length));
+  const heights = tables.map((table) => cardHeight(table.columns.length, expandedIds.has(toNodeId(tableId(table)))));
   const rowCount = Math.ceil(tables.length / columns);
   const rowHeights: number[] = [];
   for (let row = 0; row < rowCount; row += 1) {
@@ -136,12 +241,16 @@ function gridLayout(tables: ErTable[]): LayoutPoint[] {
   });
 }
 
-export async function layoutDiagram(tables: ErTable[], relations: ErRelation[]): Promise<LayoutPoint[]> {
+export async function layoutDiagram(
+  tables: ErTable[],
+  relations: ErRelation[],
+  expandedIds: ReadonlySet<string> = new Set(),
+): Promise<LayoutPoint[]> {
   if (tables.length === 0) return [];
   const points = tables.map((table) => ({
     id: toNodeId(tableId(table)),
     width: CARD_WIDTH,
-    height: cardHeight(table.columns.length),
+    height: cardHeight(table.columns.length, expandedIds.has(toNodeId(tableId(table)))),
   }));
   const known = new Set(points.map((point) => point.id));
   const edges = relations.flatMap((relation, index) => {
@@ -170,15 +279,15 @@ export async function layoutDiagram(tables: ErTable[], relations: ErRelation[]):
       edges,
     } satisfies ElkNode);
     const byId = new Map((graph.children ?? []).map((child) => [child.id, child]));
-    return points.map((point) => {
+    return normalizeLayout(points.map((point) => {
       const placed = byId.get(point.id);
       return {
         ...point,
-        x: placed?.x ?? 24,
-        y: placed?.y ?? 24,
+        x: placed?.x ?? LAYOUT_ORIGIN,
+        y: placed?.y ?? LAYOUT_ORIGIN,
       };
-    });
+    }));
   } catch {
-    return gridLayout(tables);
+    return normalizeLayout(gridLayout(tables, expandedIds));
   }
 }

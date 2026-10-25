@@ -48,7 +48,7 @@ public class SqlTableDataExporter extends AbstractTableDataExporter<SqlTableData
     protected SqlSession onStart(OutputStream outputStream, DbContext db, String tableName, String fileType,
                                  List<String> headers, List<Integer> columnIndexes,
                                  SqlCommandResult firstPage, String identifierQuote) throws IOException {
-        OutputStreamWriter streamWriter = new OutputStreamWriter(outputStream, StandardCharsets.UTF_8);
+        OutputStreamWriter streamWriter = new OutputStreamWriter(nonClosing(outputStream), StandardCharsets.UTF_8);
         BufferedWriter writer = new BufferedWriter(streamWriter);
 
         List<String> selectedHeaders = columnIndexes.stream().map(headers::get).toList();

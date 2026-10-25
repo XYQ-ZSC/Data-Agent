@@ -12,6 +12,7 @@ import edu.zsc.ai.plugin.model.command.sql.SqlCommandResult;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.io.FilterOutputStream;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.sql.Connection;
@@ -110,6 +111,20 @@ public abstract class AbstractTableDataExporter<S> implements TableDataExporter 
      */
     protected void preCheck(TableManager provider, Connection connection, DbContext db,
                             String tableName, String fileType) {
+    }
+
+    /**
+     * Servlet responses own the output stream. Closing a writer or generator
+     * must not close that stream, or the download is cut off before the client
+     * finishes reading it.
+     */
+    protected static OutputStream nonClosing(OutputStream outputStream) {
+        return new FilterOutputStream(outputStream) {
+            @Override
+            public void close() throws IOException {
+                flush();
+            }
+        };
     }
 
     /**

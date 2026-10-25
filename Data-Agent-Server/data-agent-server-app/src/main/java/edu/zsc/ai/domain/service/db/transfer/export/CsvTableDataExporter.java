@@ -41,7 +41,7 @@ public class CsvTableDataExporter extends AbstractTableDataExporter<CsvTableData
     protected CsvSession onStart(OutputStream outputStream, DbContext db, String tableName, String fileType,
                                  List<String> headers, List<Integer> columnIndexes,
                                  SqlCommandResult firstPage, String identifierQuote) throws IOException {
-        OutputStreamWriter streamWriter = new OutputStreamWriter(outputStream, StandardCharsets.UTF_8);
+        OutputStreamWriter streamWriter = new OutputStreamWriter(nonClosing(outputStream), StandardCharsets.UTF_8);
         BufferedWriter writer = new BufferedWriter(streamWriter);
         boolean hasRows = firstPage.getRows() != null && !firstPage.getRows().isEmpty();
         // Empty table without headers writes nothing at all (original behavior).

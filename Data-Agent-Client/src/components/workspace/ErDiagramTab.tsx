@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   Background,
@@ -6,12 +6,10 @@ import {
   ReactFlow,
   ReactFlowProvider,
   getNodesBounds,
-  getViewportForBounds,
   useEdgesState,
   useNodesState,
   useReactFlow,
 } from '@xyflow/react';
-import { toPng } from 'html-to-image';
 import '@xyflow/react/dist/style.css';
 import { I18N_KEYS } from '../../constants/i18nKeys';
 import { tableService, type ErDiagram, type ErTable } from '../../services/table.service';
@@ -19,21 +17,28 @@ import { useWorkspaceStore } from '../../store/workspaceStore';
 import { TableDblClickConsoleTargetEnum } from '../../constants/workspacePreferences';
 import type { ConsoleTabMetadata, ErDiagramTabMetadata } from '../../types/tab';
 import { useToast } from '../../hooks/useToast';
-import { downloadDataUrl, erDiagramFilename } from './erDiagramExport';
+import { useTheme } from '../../hooks/useTheme';
+import { downloadBlob, erDiagramFilename, renderErDiagramPng } from './erDiagramExport';
 import { ErRelationEdgeView } from './ErDiagramEdge';
 import { ErTableNode, type ErTableNodeType } from './ErDiagramNode';
+import { ErDiagramMiniMap } from './ErDiagramMiniMap';
+import { ErDiagramZoomBar } from './ErDiagramZoomBar';
 import { buildDiagramEdges, ER_ROSE, ER_VIOLET, type ErRelationEdge } from './erDiagramEdges';
 import { ErDiagramInteractionContext, ErDiagramRectsContext } from './erDiagramInteraction';
 import {
   CARD_WIDTH,
+  ER_MAX_ZOOM,
+  ER_MIN_ZOOM,
   cardHeight,
   clearStoredLayout,
   hasStoredLayout,
+  layoutBounds,
   layoutDiagram,
   layoutStorageKey,
   mergeStoredPositions,
   readStoredLayout,
   toNodeId,
+  viewportForDiagram,
   writeStoredLayout,
   type LayoutPoint,
 } from './erDiagramLayout';
@@ -110,7 +115,7 @@ function toFlowNodes(tables: ErTable[], points: LayoutPoint[], previous: ErTable
 
 export function ErDiagramTab({ metadata }: ErDiagramTabProps) {
   return (
-    <ReactFlowProvider>
+    <ReactFlowProvider key={layoutStorageKey(metadata.connectionId, metadata.catalog, metadata.schema)}>
       <ErDiagramCanvas metadata={metadata} />
     </ReactFlowProvider>
   );
@@ -118,6 +123,7 @@ export function ErDiagramTab({ metadata }: ErDiagramTabProps) {
 
 function ErDiagramCanvas({ metadata }: ErDiagramTabProps) {
   const { t } = useTranslation();
+  const { theme } = useTheme();
   const toast = useToast();
   const openTab = useWorkspaceStore((state) => state.openTab);
   const tabs = useWorkspaceStore((state) => state.tabs);
@@ -125,7 +131,7 @@ function ErDiagramCanvas({ metadata }: ErDiagramTabProps) {
   const updateTabMetadata = useWorkspaceStore((state) => state.updateTabMetadata);
   const switchTab = useWorkspaceStore((state) => state.switchTab);
   const tableDblClickConsoleTarget = useWorkspaceStore((state) => state.tableDblClickConsoleTarget);
-  const { fitView, getNodes } = useReactFlow();
+  const { getNodes, setViewport } = useReactFlow();
   const [diagram, setDiagram] = useState<ErDiagram | null>(null);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
@@ -143,12 +149,17 @@ function ErDiagramCanvas({ metadata }: ErDiagramTabProps) {
   const draggingRef = useRef(false);
   const flowRef = useRef<HTMLDivElement>(null);
   const requestId = useRef(0);
-  const fittedKey = useRef('');
+  const framedToken = useRef(-1);
+  const [layoutVersion, setLayoutVersion] = useState(0);
+  const [frameReady, setFrameReady] = useState(false);
   const storageKey = layoutStorageKey(metadata.connectionId, metadata.catalog, metadata.schema);
+
+  useEffect(() => () => { requestId.current += 1; }, []);
 
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
+    setDiagram(null);
     setError('');
     setHoverState(null);
     setPinned(null);
@@ -198,18 +209,38 @@ function ErDiagramCanvas({ metadata }: ErDiagramTabProps) {
     setPinned((current) => (current && !visible.has(current.tableId) ? null : current));
   }, [shown]);
 
-  const placeNodes = useCallback((next: ErDiagram, useStored: boolean) => {
+  const placeNodes = useCallback((
+    next: ErDiagram,
+    useStored: boolean,
+    previous = getNodes() as ErTableNodeType[],
+    persist = false,
+    frame = true,
+  ) => {
     const token = ++requestId.current;
     setLayouting(true);
-    return layoutDiagram(next.tables, next.relations).then((points) => {
+    const expandedIds = new Set(previous.filter((node) => node.data.expanded).map((node) => node.id));
+    return layoutDiagram(next.tables, next.relations, expandedIds).then((points) => {
       if (token !== requestId.current) return;
       const stored = useStored ? readStoredLayout(storageKey) : null;
-      setHasCustomLayout(hasStoredLayout(stored));
-      setNodes(toFlowNodes(next.tables, mergeStoredPositions(points, stored), getNodes() as ErTableNodeType[]));
+      setHasCustomLayout(persist || hasStoredLayout(stored));
+      setNodes(toFlowNodes(next.tables, mergeStoredPositions(points, stored), previous));
+      if (persist) {
+        writeStoredLayout(storageKey, Object.fromEntries(points.map((point) => [point.id, { x: point.x, y: point.y }])));
+      }
+      if (frame) setLayoutVersion((version) => version + 1);
     }).finally(() => {
       if (token === requestId.current) setLayouting(false);
     });
   }, [getNodes, setNodes, storageKey]);
+
+  const toggleExpanded = useCallback((nodeId: string) => {
+    if (!shown || layouting || exporting) return;
+    const previous = (getNodes() as ErTableNodeType[]).map((node) => (
+      node.id === nodeId ? { ...node, data: { ...node.data, expanded: !node.data.expanded } } : node
+    ));
+    // Re-layout with the actual card sizes; saved collapsed positions would overlap.
+    void placeNodes(shown, false, previous, true);
+  }, [exporting, getNodes, layouting, placeNodes, shown]);
 
   useEffect(() => {
     if (!shown || shown.tables.length === 0) {
@@ -382,12 +413,17 @@ function ErDiagramCanvas({ metadata }: ErDiagramTabProps) {
     togglePin,
     setHover,
     clearHover,
+    busy: layouting || exporting,
+    toggleExpanded,
     openData: openTableData,
     openDdl: openTableDdl,
     openExternal: openExternalErDiagram,
   }), [
     active,
     clearHover,
+    exporting,
+    layouting,
+    toggleExpanded,
     highlightedColumns,
     junctionTables,
     linkedColumns,
@@ -398,24 +434,58 @@ function ErDiagramCanvas({ metadata }: ErDiagramTabProps) {
     togglePin,
   ]);
 
-  const fitToWindow = useCallback(() => {
-    void fitView({ padding: '32px', maxZoom: 1, minZoom: 0.08, duration: 0 });
-  }, [fitView]);
+  const frameNodes = useCallback((current: ErTableNodeType[]) => {
+    const pane = flowRef.current;
+    if (!pane || current.length === 0) return Promise.resolve(false);
+    const bounds = layoutBounds(current.map((node) => ({
+      x: node.position.x,
+      y: node.position.y,
+      width: node.measured?.width || node.width || CARD_WIDTH,
+      height: node.measured?.height || node.height || cardHeight(node.data.table.columns.length, node.data.expanded),
+    })));
+    const viewport = viewportForDiagram(bounds, pane.clientWidth, pane.clientHeight);
+    if (!viewport) return Promise.resolve(false);
+    return setViewport(viewport, { duration: 0 }).then((applied) => applied, () => false);
+  }, [setViewport]);
 
-  useEffect(() => {
-    if (layouting || nodes.length === 0) return;
-    const key = nodes.map((node) => node.id).sort().join('\n');
-    if (fittedKey.current === key) return;
-    fittedKey.current = key;
-    const frame = requestAnimationFrame(() => fitToWindow());
-    return () => cancelAnimationFrame(frame);
-  }, [fitToWindow, layouting, nodes]);
+  const fitToWindow = useCallback(() => {
+    void frameNodes(getNodes() as ErTableNodeType[]);
+  }, [frameNodes, getNodes]);
+
+  useLayoutEffect(() => {
+    if (layouting || nodes.length === 0 || framedToken.current === layoutVersion) return;
+    setFrameReady(false);
+    let stopped = false;
+    let attempts = 0;
+    let frame = 0;
+    const apply = () => {
+      if (stopped || framedToken.current === layoutVersion) return;
+      void frameNodes(nodes).then((fitted) => {
+        if (stopped || framedToken.current === layoutVersion) return;
+        if (fitted) {
+          framedToken.current = layoutVersion;
+          setFrameReady(true);
+          return;
+        }
+        attempts += 1;
+        if (attempts < 8) frame = requestAnimationFrame(apply);
+      });
+    };
+    apply();
+    const pane = flowRef.current;
+    const observer = pane ? new ResizeObserver(() => apply()) : null;
+    if (pane && observer) observer.observe(pane);
+    return () => {
+      stopped = true;
+      cancelAnimationFrame(frame);
+      observer?.disconnect();
+    };
+  }, [frameNodes, layoutVersion, layouting, nodes]);
 
   const resetLayout = () => {
     if (!shown || shown.tables.length === 0) return;
-    fittedKey.current = '';
     clearStoredLayout(storageKey);
-    void placeNodes(shown, false);
+    void placeNodes(shown, false, getNodes() as ErTableNodeType[], false, false);
   };
 
   const onNodeDragStart = () => {
@@ -436,30 +506,17 @@ function ErDiagramCanvas({ metadata }: ErDiagramTabProps) {
 
   const exportImage = async () => {
     const viewport = flowRef.current?.querySelector('.react-flow__viewport');
-    if (!(viewport instanceof HTMLElement) || exporting) return;
+    if (!(viewport instanceof HTMLElement) || exporting || layouting) return;
     const currentNodes = getNodes();
     if (currentNodes.length === 0) return;
     const bounds = getNodesBounds(currentNodes);
     if (bounds.width <= 0 || bounds.height <= 0) return;
-    const imageWidth = Math.max(1, Math.min(8192, Math.ceil(bounds.width + 96)));
-    const imageHeight = Math.max(1, Math.min(8192, Math.ceil(bounds.height + 96)));
-    const fitted = getViewportForBounds(bounds, imageWidth, imageHeight, 0.05, 1, '48px');
     const background = getComputedStyle(document.documentElement).getPropertyValue('--bg-main').trim() || '#f4f7fb';
     setExporting(true);
     try {
-      const dataUrl = await toPng(viewport, {
-        backgroundColor: background,
-        width: imageWidth,
-        height: imageHeight,
-        pixelRatio: 1,
-        style: {
-          width: `${imageWidth}px`,
-          height: `${imageHeight}px`,
-          transform: `translate(${fitted.x}px, ${fitted.y}px) scale(${fitted.zoom})`,
-        },
-      });
+      const blob = await renderErDiagramPng(viewport, bounds, background);
       const name = metadata.databaseName || metadata.schemaName || metadata.connectionName || 'er-diagram';
-      downloadDataUrl(dataUrl, erDiagramFilename(name));
+      downloadBlob(blob, erDiagramFilename(name));
       toast.success(t(I18N_KEYS.EXPLORER.ER_DIAGRAM_EXPORTED));
     } catch {
       toast.error(t(I18N_KEYS.EXPLORER.ER_DIAGRAM_EXPORT_FAILED));
@@ -554,7 +611,7 @@ function ErDiagramCanvas({ metadata }: ErDiagramTabProps) {
                 <button
                   type="button"
                   className="rounded border theme-border px-2 py-0.5 theme-text-primary disabled:opacity-40"
-                  disabled={exporting || nodes.length === 0}
+                  disabled={exporting || layouting || nodes.length === 0}
                   onClick={() => { void exportImage(); }}
                 >
                   {t(I18N_KEYS.EXPLORER.ER_DIAGRAM_EXPORT)}
@@ -564,7 +621,7 @@ function ErDiagramCanvas({ metadata }: ErDiagramTabProps) {
                 <button
                   type="button"
                   className="rounded border theme-border px-2 py-0.5 theme-text-primary disabled:opacity-40"
-                  disabled={!hasCustomLayout}
+                  disabled={!hasCustomLayout || layouting || exporting}
                   onClick={resetLayout}
                 >
                   {t(I18N_KEYS.EXPLORER.ER_DIAGRAM_RESET_LAYOUT)}
@@ -626,6 +683,7 @@ function ErDiagramCanvas({ metadata }: ErDiagramTabProps) {
             {showCanvas && (
               <div ref={flowRef} className="er-diagram-flow h-full min-h-0">
                 <ReactFlow
+                  colorMode={theme}
                   nodes={nodes}
                   edges={edges}
                   onNodesChange={onNodesChange}
@@ -634,16 +692,19 @@ function ErDiagramCanvas({ metadata }: ErDiagramTabProps) {
                   edgeTypes={edgeTypes}
                   onNodeDragStart={onNodeDragStart}
                   onNodeDragStop={onNodeDragStop}
-                  minZoom={0.08}
-                  maxZoom={1.8}
+                  minZoom={ER_MIN_ZOOM}
+                  maxZoom={ER_MAX_ZOOM}
                   deleteKeyCode={null}
                   nodesConnectable={false}
+                  nodesDraggable={!layouting && !exporting}
                   elementsSelectable={false}
                   zoomOnDoubleClick={false}
                   className="theme-bg-main"
                   style={{ backgroundColor: 'var(--bg-main)' }}
                 >
                   <Background variant={BackgroundVariant.Dots} gap={18} size={1} color="var(--border-color)" />
+                  <ErDiagramMiniMap ready={frameReady} disabled={layouting || exporting} />
+                  <ErDiagramZoomBar disabled={layouting || exporting} />
                 </ReactFlow>
                 {layouting && nodes.length === 0 && (
                   <div className="pointer-events-none absolute inset-0 flex items-center justify-center text-sm theme-text-secondary">
