@@ -187,6 +187,8 @@
     "security_notice_desc": "修改密码后，为保障账户安全，您将在所有设备上自动退出，请使用新密码重新登录。"
   },
   "workspace": {
+    "statement_analysis_failed": "无法定位完整 SQL 语句：{{error}}",
+    "sql_running": "SQL 正在运行",
     "new_console": "新控制台",
     "new_console_tab_title": "新控制台",
     "run_shortcut": "运行查询 ({{shortcut}})",

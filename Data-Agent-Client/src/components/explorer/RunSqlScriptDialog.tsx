@@ -31,6 +31,7 @@ export function RunSqlScriptDialog({ open, onOpenChange, target }: RunSqlScriptD
   const { t } = useTranslation();
   const toast = useToast();
   const runSql = useSqlRunStore((s) => s.runSql);
+  const isRunning = useSqlRunStore((s) => s.isRunning);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const [fileName, setFileName] = useState('');
@@ -56,11 +57,11 @@ export function RunSqlScriptDialog({ open, onOpenChange, target }: RunSqlScriptD
   };
 
   const handleRun = () => {
-    if (!target || !fileContent.trim()) return;
+    if (!target || !fileContent.trim() || isRunning) return;
 
     // ATOMIC mode only accepts queries and transactional DML; DDL and other
     // non-atomic statements are rejected server-side, so auto-switch to STEPWISE.
-    const mode: SqlBatchMode = containsNonAtomicStatement(fileContent) ? 'STEPWISE' : 'ATOMIC';
+    const mode: SqlBatchMode = containsNonAtomicStatement(fileContent, target.dbType?.toUpperCase() !== 'DM') ? 'STEPWISE' : 'ATOMIC';
 
     // Route execution through the shared run store so the outcome streams into
     // the workspace Output panel (per-statement success/failure), like the editor.
@@ -143,7 +144,7 @@ export function RunSqlScriptDialog({ open, onOpenChange, target }: RunSqlScriptD
             >
               {t(I18N_KEYS.COMMON.CANCEL)}
             </Button>
-            <Button onClick={handleRun} disabled={!fileContent.trim()}>
+            <Button onClick={handleRun} disabled={!fileContent.trim() || isRunning}>
               <Play className="mr-2 h-4 w-4" />
               {t(I18N_KEYS.EXPLORER.RUN_SQL_SCRIPT_RUN)}
             </Button>

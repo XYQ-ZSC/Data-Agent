@@ -17,15 +17,19 @@ import { connectionService } from "../services/connection.service";
 import { sqlAnalysisService } from "../services/sqlAnalysis.service";
 import { getSqlDialectByDbType } from "../constants/sqlDialect";
 import { formatSql } from "../utils/sql";
-import { containsNonAtomicStatement } from "../utils/sqlRunner";
-import { extractSqlVariables, substituteSqlVariables, type SqlVariable } from "../utils/sqlVariables";
+import { containsNonAtomicStatement, statementSqlAtOffset } from "../utils/sqlRunner";
+import { extractSqlVariables, substituteSqlVariablesAtOffset, type SqlVariable } from "../utils/sqlVariables";
 import { SqlParameterDialog } from "../components/editor/SqlParameterDialog";
+import { useToast } from '../hooks/useToast';
+import { Button } from '../components/ui/Button';
 import { I18N_KEYS } from "../constants/i18nKeys";
 
 const NO_VARIABLES: SqlVariable[] = [];
 
 export default function Home() {
     const { t } = useTranslation();
+    const toast = useToast();
+    const preparingRunRef = useRef(false);
     const { tabs, activeTabId, updateTabContent, updateTabMetadata } = useWorkspaceStore();
     const {
         executeResult,
@@ -37,7 +41,6 @@ export default function Home() {
         stopSql,
         setResultsVisible,
     } = useSqlRunStore();
-    const [scriptMode, setScriptMode] = useState<SqlBatchMode>('ATOMIC');
     const [timeoutSeconds, setTimeoutSeconds] = useState(30);
     const [maxRows, setMaxRows] = useState(10000);
     const editorRef = useRef<MonacoEditorHandle | null>(null);
@@ -47,6 +50,8 @@ export default function Home() {
         sql: string;
         variables: SqlVariable[];
         mysql: boolean;
+        cursorOffset?: number;
+        tabId?: string;
     } | null>(null);
 
     const activeTab = tabs.find(t => t.id === activeTabId);
@@ -54,6 +59,8 @@ export default function Home() {
     const sqlContext = !isSpecialTab
         ? activeTab?.metadata as import('../types/tab').ConsoleTabMetadata | undefined
         : undefined;
+
+    const scriptMode: SqlBatchMode = sqlContext?.sqlBatchMode ?? 'ATOMIC';
 
     useEffect(() => {
         const connectionId = sqlContext?.connectionId;
@@ -99,15 +106,36 @@ export default function Home() {
         if (formatted !== original) updateTabContent(activeTab.id, formatted);
     }, [activeTab, connectionType, sqlContext?.connectionId, updateTabContent]);
 
-    const executeSqlText = useCallback(async (sql: string) => {
-        if (!sql || !sqlContext?.connectionId) return;
+    const executeSqlText = useCallback(async (sql: string, cursorOffset?: number) => {
+        if (!sql || !sqlContext?.connectionId || isRunning || preparingRunRef.current) return;
+        if (cursorOffset !== undefined) {
+            preparingRunRef.current = true;
+            try {
+                const analysis = await sqlAnalysisService.analyze({ ...sqlContext, sql });
+                // A response for a previous tab or an edited script must not execute.
+                const workspace = useWorkspaceStore.getState();
+                const currentTab = workspace.tabs.find(tab => tab.id === activeTabId);
+                const currentContext = currentTab?.metadata as import('../types/tab').ConsoleTabMetadata | undefined;
+                if (workspace.activeTabId !== activeTabId
+                    || currentTab?.content !== activeTab?.content
+                    || currentContext?.connectionId !== sqlContext.connectionId
+                    || currentContext?.databaseName !== sqlContext.databaseName
+                    || currentContext?.schemaName !== sqlContext.schemaName) return;
+                sql = statementSqlAtOffset(sql, cursorOffset, analysis);
+                if (!sql.trim()) return;
+            } catch (error) {
+                toast.error(t(I18N_KEYS.WORKSPACE.STATEMENT_ANALYSIS_FAILED, { error: String(error) }));
+                return;
+            } finally {
+                preparingRunRef.current = false;
+            }
+        }
 
         // ATOMIC mode only accepts queries and transactional DML; DDL (e.g. the
         // generated DROP/CREATE/ALTER scripts) is rejected server-side. Auto-switch
         // to STEPWISE for those scripts so they run instead of failing.
         const effectiveMode: SqlBatchMode =
-            scriptMode === 'ATOMIC' && containsNonAtomicStatement(sql) ? 'STEPWISE' : scriptMode;
-        if (effectiveMode !== scriptMode) setScriptMode(effectiveMode);
+            scriptMode === 'ATOMIC' && containsNonAtomicStatement(sql, connectionType?.dbType.toUpperCase() !== 'DM') ? 'STEPWISE' : scriptMode;
 
         await runSql({
             connectionId: sqlContext.connectionId,
@@ -119,42 +147,35 @@ export default function Home() {
             timeoutMs: timeoutSeconds * 1000,
             maxRows,
         });
-    }, [connectionType, sqlContext, scriptMode, timeoutSeconds, maxRows, runSql]);
+    }, [connectionType, sqlContext, scriptMode, timeoutSeconds, maxRows, runSql, isRunning, activeTabId, activeTab?.content, t, toast]);
 
-    const runSqlFromEditor = useCallback((getSql: () => string) => {
-        if (pendingParameters) return;
-        const sql = getSql().trim();
-        if (!sql || !sqlContext?.connectionId) return;
+    const runSqlFromEditor = useCallback((getInput: () => { sql: string; cursorOffset?: number }) => {
+        if (pendingParameters || isRunning || preparingRunRef.current || activeTab?.type !== 'file') return;
+        const { sql, cursorOffset } = getInput();
+        if (!sql.trim() || !sqlContext?.connectionId) return;
 
         const mysql = connectionType?.dbType.toUpperCase() !== 'DM';
         const variables = extractSqlVariables(sql, mysql);
         if (variables.length > 0) {
-            setPendingParameters({ sql, variables, mysql });
+            setPendingParameters({ sql, variables, mysql, cursorOffset, tabId: activeTabId ?? undefined });
             return;
         }
-        void executeSqlText(sql);
-    }, [connectionType, executeSqlText, pendingParameters, sqlContext?.connectionId]);
+        void executeSqlText(sql, cursorOffset);
+    }, [connectionType, executeSqlText, pendingParameters, sqlContext?.connectionId, isRunning, activeTab?.type, activeTabId]);
 
     // Toolbar "Run": execute the whole script, or the selection when one is active.
     const handleRunQuery = useCallback(() => {
         runSqlFromEditor(() =>
-            editorRef.current?.getSelectionOrAllContent() ?? activeTab?.content ?? '');
+            ({ sql: editorRef.current?.getSelectionOrAllContent() ?? activeTab?.content ?? '' }));
     }, [runSqlFromEditor, activeTab?.content]);
 
     // Ctrl/Cmd+Enter: execute the statement under the cursor, or the selection.
     const handleRunStatement = useCallback(() => {
         runSqlFromEditor(() =>
-            editorRef.current?.getSelectionOrStatement() ?? activeTab?.content ?? '');
-    }, [runSqlFromEditor, activeTab?.content]);
+            editorRef.current?.getSelectionOrCursorInput() ?? { sql: '' });
+    }, [runSqlFromEditor]);
 
-    const handleStop = useCallback(() => {
-        if (!sqlContext?.connectionId) return;
-        void stopSql({
-            connectionId: sqlContext.connectionId,
-            databaseName: sqlContext.databaseName,
-            schemaName: sqlContext.schemaName,
-        });
-    }, [sqlContext, stopSql]);
+    const handleStop = useCallback(() => { void stopSql(); }, [stopSql]);
 
     // SQL Editor Shortcuts
     useEffect(() => {
@@ -173,6 +194,12 @@ export default function Home() {
         <div className="flex-1 min-w-0 h-full overflow-hidden flex flex-col">
             {/* Tab Bar */}
             <TabBar />
+            {isRunning && (
+                <div className="workbench-header flex items-center justify-between px-3 py-1 text-xs">
+                    <span>{t(I18N_KEYS.WORKSPACE.SQL_RUNNING)}</span>
+                    <Button variant="outline" size="sm" onClick={handleStop}>{t(I18N_KEYS.COMMON.STOP)}</Button>
+                </div>
+            )}
 
             {/* Workspace Area */}
             {activeTab?.type === 'plan' ? (
@@ -211,7 +238,7 @@ export default function Home() {
                                     onStop={handleStop}
                                     isRunning={isRunning}
                                     scriptMode={scriptMode}
-                                    onScriptModeChange={setScriptMode}
+                                    onScriptModeChange={(mode) => updateTabMetadata(activeTab.id, { sqlBatchMode: mode })}
                                     timeoutSeconds={timeoutSeconds}
                                     onTimeoutSecondsChange={setTimeoutSeconds}
                                     maxRows={maxRows}
@@ -262,8 +289,9 @@ export default function Home() {
                 onSubmit={(values) => {
                     const pending = pendingParameters;
                     setPendingParameters(null);
-                    if (pending) {
-                        void executeSqlText(substituteSqlVariables(pending.sql, values, pending.mysql));
+                    if (pending && useWorkspaceStore.getState().activeTabId === pending.tabId) {
+                        const input = substituteSqlVariablesAtOffset(pending.sql, values, pending.mysql, pending.cursorOffset);
+                        void executeSqlText(input.sql, input.cursorOffset);
                     }
                 }}
             />

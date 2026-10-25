@@ -108,7 +108,7 @@ public class InferColumnTypeSupport {
 
         // 3) Boolean
         if (allMatch(nonNullSamples, InferColumnTypeSupport::isBooleanLiteral)) {
-            return numericColumn(name, ordinal, Types.BIT, "TINYINT", 1, 0);
+            return numericColumn(name, ordinal, Types.BIT, "BIT", 1, 0);
         }
 
         // 4) Date yyyy-MM-dd

@@ -1,3 +1,5 @@
+import type { SqlScriptAnalysis } from '../types/sql';
+
 /**
  * SQL script runner helpers.
  *
@@ -29,15 +31,16 @@ export interface SqlStatementSpan {
 }
 
 /**
- * Split a SQL script into top-level statements on `;`, respecting string literals,
+ * Lexically split SQL for execution-mode hints only (not cursor execution) on `;`, respecting string literals,
  * quoted identifiers, and `--` / `/* *​/` comments. Returns trimmed statement text
  * together with its offsets in the original string.
  */
-export function splitSqlSpans(sql: string): SqlStatementSpan[] {
+export function splitSqlSpans(sql: string, mysql = false): SqlStatementSpan[] {
   const segments: Array<{ start: number; end: number }> = [];
   let segmentStart = 0;
   let singleQuote = false;
   let doubleQuote = false;
+  let backtick = false;
   let lineComment = false;
   let blockComment = false;
 
@@ -46,7 +49,7 @@ export function splitSqlSpans(sql: string): SqlStatementSpan[] {
     const next = sql[i + 1];
 
     if (lineComment) {
-      if (c === '\n') lineComment = false;
+      if (c === '\n' || c === '\r') lineComment = false;
       continue;
     }
     if (blockComment) {
@@ -54,6 +57,15 @@ export function splitSqlSpans(sql: string): SqlStatementSpan[] {
         i++;
         blockComment = false;
       }
+      continue;
+    }
+    if (backtick) {
+      if (c === '`' && next === '`') i++;
+      else if (c === '`') backtick = false;
+      continue;
+    }
+    if (mysql && (singleQuote || doubleQuote) && c === '\\') {
+      i++;
       continue;
     }
     if (singleQuote) {
@@ -66,8 +78,8 @@ export function splitSqlSpans(sql: string): SqlStatementSpan[] {
       else if (c === '"') doubleQuote = false;
       continue;
     }
-    if (c === '-' && next === '-') {
-      i++;
+    if ((c === '-' && next === '-' && (!mysql || !sql[i + 2] || /\s/.test(sql[i + 2]))) || (mysql && c === '#')) {
+      if (c === '-') i++;
       lineComment = true;
       continue;
     }
@@ -82,6 +94,10 @@ export function splitSqlSpans(sql: string): SqlStatementSpan[] {
     }
     if (c === '"') {
       doubleQuote = true;
+      continue;
+    }
+    if (c === '`') {
+      backtick = true;
       continue;
     }
     if (c === ';') {
@@ -108,24 +124,30 @@ export function splitSqlSpans(sql: string): SqlStatementSpan[] {
 }
 
 /** Split a SQL script into top-level statements, returning trimmed statement text only. */
-export function splitSqlStatements(sql: string): string[] {
-  return splitSqlSpans(sql).map((span) => span.sql);
+export function splitSqlStatements(sql: string, mysql = false): string[] {
+  return splitSqlSpans(sql, mysql).map((span) => span.sql);
 }
 
-/**
- * Locate the statement whose raw segment contains the given offset (a cursor).
- * A cursor sitting on the terminating `;` still maps to the preceding statement.
- * Returns null when the offset falls after the last statement (trailing whitespace).
+/** Use dialect parser spans to select a complete statement, including routine bodies.
+ * A parse failure never falls back to executing the entire script or a fragment.
  */
-export function statementSpanAtOffset(sql: string, offset: number): SqlStatementSpan | null {
-  return splitSqlSpans(sql).find((span) => offset >= span.segmentStart && offset <= span.segmentEnd) ?? null;
+export function statementSqlAtOffset(sql: string, offset: number, analysis: SqlScriptAnalysis): string {
+  if (analysis.errors.length) throw new Error(analysis.errors[0].message);
+  let previousEnd = 0;
+  for (const statement of analysis.statements) {
+    if (offset >= previousEnd && offset <= statement.endOffset) {
+      return sql.slice(statement.startOffset, statement.endOffset);
+    }
+    previousEnd = statement.endOffset + (sql[statement.endOffset] === ';' ? 1 : 0);
+  }
+  return '';
 }
 
 /** Return the leading keyword of a statement, or '' when it starts with a comment. */
 function firstKeyword(statement: string): string {
   let s = statement.trimStart();
-  while (s.startsWith('--') || s.startsWith('/*')) {
-    if (s.startsWith('--')) {
+  while (s.startsWith('--') || s.startsWith('#') || s.startsWith('/*')) {
+    if (s.startsWith('--') || s.startsWith('#')) {
       const nl = s.indexOf('\n');
       s = nl === -1 ? '' : s.slice(nl + 1).trimStart();
     } else {
@@ -142,8 +164,8 @@ function firstKeyword(statement: string): string {
  * (anything that is not a query or transactional DML — e.g. DROP/CREATE/ALTER/TRUNCATE).
  * Such scripts must run in STEPWISE mode.
  */
-export function containsNonAtomicStatement(sql: string): boolean {
-  return splitSqlStatements(sql).some((statement) => {
+export function containsNonAtomicStatement(sql: string, mysql = false): boolean {
+  return splitSqlStatements(sql, mysql).some((statement) => {
     const keyword = firstKeyword(statement);
     return keyword !== '' && !ATOMIC_FIRST_KEYWORDS.has(keyword);
   });

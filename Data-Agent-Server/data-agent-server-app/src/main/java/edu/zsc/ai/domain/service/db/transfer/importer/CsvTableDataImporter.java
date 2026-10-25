@@ -15,6 +15,8 @@ import org.apache.commons.csv.CSVRecord;
 import org.springframework.stereotype.Component;
 
 import java.io.BufferedReader;
+import java.io.ByteArrayOutputStream;
+import java.io.FilterInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
@@ -52,51 +54,49 @@ public class CsvTableDataImporter extends AbstractTableDataImporter {
 
     @Override
     protected PeekResult peekHeadersAndSample(PushbackInputStream pushback, String encoding) throws IOException {
-        // Read up to 64 KB — header + 50 data rows almost always fit.
-        byte[] chunk = pushback.readNBytes(64 * 1024);
-        if (chunk.length == 0) {
-            return PeekResult.empty();
-        }
-        try {
-            Charset charset = detectCharset(chunk, encoding);
-            String text = charset.decode(java.nio.ByteBuffer.wrap(chunk)).toString();
-            // Strip leading BOM if present so CSV header detection sees clean text
-            if (text.startsWith("\uFEFF")) {
-                text = text.substring(1);
+        Charset charset = resolveCharset(pushback, encoding);
+        ByteArrayOutputStream consumed = new ByteArrayOutputStream();
+        // Capture parser read-ahead as well as complete sampled records. The
+        // original stream stays open so prepare() can replay this prefix and
+        // then continue streaming the rest of a large file.
+        InputStream recording = new FilterInputStream(pushback) {
+            @Override
+            public int read() throws IOException {
+                int value = in.read();
+                if (value >= 0) consumed.write(value);
+                return value;
             }
 
-            CSVFormat csvFormat = CSVFormat.DEFAULT.builder().setHeader().setSkipHeaderRecord(true).build();
-            try (CSVParser parser = csvFormat.parse(new java.io.StringReader(text))) {
-                List<String> headers = parser.getHeaderNames();
-                if (headers == null || headers.isEmpty()) {
-                    return PeekResult.empty();
-                }
-                List<String[]> samples = new ArrayList<>();
-                int limit = InferColumnTypeSupport.SAMPLE_ROW_LIMIT;
-                for (CSVRecord record : parser) {
-                    if (samples.size() >= limit) break;
-                    String[] row = new String[headers.size()];
-                    for (int i = 0; i < headers.size(); i++) {
-                        row[i] = record.isSet(i) ? record.get(i) : null;
-                    }
-                    samples.add(row);
-                }
-                // CSV streams from the pushed-back buffer, so no content is returned here.
-                return new PeekResult(headers, samples, null);
-            } catch (RuntimeException ex) {
-                // malformed header or bad CSV — surface so that prepare() fails later with a better message
-                throw new IOException("Failed to peek CSV header: " + ex.getMessage(), ex);
+            @Override
+            public int read(byte[] bytes, int offset, int length) throws IOException {
+                int count = in.read(bytes, offset, length);
+                if (count > 0) consumed.write(bytes, offset, count);
+                return count;
             }
-        } finally {
-            // Always push back the consumed bytes so the real parse begins at position 0.
-            pushback.unread(chunk);
-        }
-    }
 
-    /** BOM-aware charset detection purely on a byte sample, without touching the stream. */
-    private Charset detectCharset(byte[] sample, String requested) {
-        Charset explicit = explicitCharset(requested);
-        return explicit != null ? explicit : sniffCharset(sample, sample.length);
+            @Override
+            public void close() { /* The import owns the original stream. */ }
+        };
+        BufferedReader reader = new BufferedReader(new InputStreamReader(recording, charset));
+        reader.mark(1);
+        if (reader.read() != '\uFEFF') reader.reset();
+        CSVFormat format = CSVFormat.DEFAULT.builder().setHeader().setSkipHeaderRecord(true).build();
+        try (CSVParser parser = format.parse(reader)) {
+            List<String> headers = parser.getHeaderNames();
+            List<String[]> samples = new ArrayList<>();
+            Iterator<CSVRecord> records = parser.iterator();
+            while (samples.size() < InferColumnTypeSupport.SAMPLE_ROW_LIMIT && records.hasNext()) {
+                CSVRecord record = records.next();
+                String[] row = new String[headers.size()];
+                for (int i = 0; i < headers.size(); i++) {
+                    row[i] = record.isSet(i) ? record.get(i) : null;
+                }
+                samples.add(row);
+            }
+            return new PeekResult(headers, samples, consumed.toByteArray());
+        } catch (RuntimeException ex) {
+            throw new IOException("Failed to peek CSV header: " + ex.getMessage(), ex);
+        }
     }
 
     /** Resolves an explicit non-AUTO charset request, or {@code null} to auto-detect. */

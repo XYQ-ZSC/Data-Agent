@@ -14,6 +14,7 @@ import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.PushbackInputStream;
+import java.io.SequenceInputStream;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.SQLException;
@@ -97,10 +98,10 @@ public abstract class AbstractTableDataImporter implements TableDataImporter {
                     }
                     resolved = prepareSupport.resolveTableColumns(columnManager, connection, db, tableName);
                 }
-                // prepare() re-parses the file: full-buffer formats (Excel, JSON)
-                // replay from the returned bytes, streaming formats (CSV) from pushback.
+                // Replay the consumed prefix (including parser read-ahead), then
+                // continue the original stream. Full-buffer formats are already at EOF.
                 inputStream = peek.content() != null
-                        ? new ByteArrayInputStream(peek.content())
+                        ? new SequenceInputStream(new ByteArrayInputStream(peek.content()), pb)
                         : pb;
             }
 
@@ -195,10 +196,8 @@ public abstract class AbstractTableDataImporter implements TableDataImporter {
     /**
      * Pre-scans the file on a {@link PushbackInputStream}, extracts the header
      * (column names) and up to {@link InferColumnTypeSupport#SAMPLE_ROW_LIMIT}
-     * data rows for type inference. Formats that read the whole input (Excel,
-     * JSON) must return the consumed bytes in {@link PeekResult#content()} so the
-     * caller can re-parse from a fresh stream; streaming formats (CSV) push the
-     * consumed bytes back and leave {@code content} {@code null}.
+     * data rows for type inference. Return consumed bytes in {@link PeekResult#content()}
+     * so the caller can replay them before the remainder of the stream.
      *
      * <p>Format importers that do not support per-column type inference (e.g.
      * SQL — the file already contains DDL) should return {@link PeekResult#empty()}
@@ -221,8 +220,8 @@ public abstract class AbstractTableDataImporter implements TableDataImporter {
 
     /**
      * Result of pre-scanning a file for auto-create-table: header names + sample
-     * rows, one String per column per row, plus the full file bytes when the format
-     * buffered them ({@code null} for streaming formats, which rely on pushback).
+     * rows, one String per column per row, plus any consumed bytes to replay
+     * before the remainder of the stream ({@code null} when nothing was consumed).
      */
     public record PeekResult(List<String> headerNames, List<String[]> sampleRows, byte[] content) {
         public static PeekResult empty() {

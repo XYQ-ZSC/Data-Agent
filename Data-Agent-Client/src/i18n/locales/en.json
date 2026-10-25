@@ -187,6 +187,8 @@
     "security_notice_desc": "After changing your password, you will be automatically logged out from all devices for security reasons. Please log in again with your new password."
   },
   "workspace": {
+    "statement_analysis_failed": "Could not locate a complete SQL statement: {{error}}",
+    "sql_running": "SQL is running",
     "new_console": "New Console",
     "new_console_tab_title": "New Console",
     "run_shortcut": "Run Query ({{shortcut}})",

@@ -45,6 +45,8 @@ export interface SqlGenerateRequest {
 
 export interface GeneratedSql {
   sql: string;
+  /** Unwrapped SQL for the server-managed transaction used by the console. */
+  consoleSql: string;
   statementCount: number;
   /** Columns used in the WHERE clause (reported so the UI can surface fallback). */
   whereColumns: string[];
@@ -52,7 +54,7 @@ export interface GeneratedSql {
 
 export function generateSql(req: SqlGenerateRequest, profile: SqlDialectProfile): GeneratedSql {
   if (req.rows.length === 0) {
-    return { sql: '', statementCount: 0, whereColumns: [] };
+    return { sql: '', consoleSql: '', statementCount: 0, whereColumns: [] };
   }
 
   const tableName = req.options.qualifyWithSchema
@@ -83,12 +85,13 @@ export function generateSql(req: SqlGenerateRequest, profile: SqlDialectProfile)
       break;
   }
 
-  let body = statements.join('\n');
+  const consoleSql = statements.join('\n');
+  let body = consoleSql;
   if (req.options.wrapInTransaction && statements.length > 0) {
     body = profile.transactionWrap(body);
   }
 
-  return { sql: body, statementCount: statements.length, whereColumns };
+  return { sql: body, consoleSql, statementCount: statements.length, whereColumns };
 }
 
 function generateInsert(req: SqlGenerateRequest, tableName: string, profile: SqlDialectProfile): string[] {
@@ -127,7 +130,10 @@ function generateUpdate(
   return {
     whereColumns,
     sql: req.rows.map((row) => {
-      const setColumns = req.columns.filter((column) => !whereColumns.includes(column));
+      const nonKeyColumns = req.columns.filter((column) => !whereColumns.includes(column));
+      // All-column WHERE fallback still needs a SET clause. A key-only table
+      // also gets a valid assignment instead of an empty SET.
+      const setColumns = nonKeyColumns.length > 0 ? nonKeyColumns : req.columns;
       const assignments = setColumns
         .map((column) => {
           const value = row[req.columns.indexOf(column)];

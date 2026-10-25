@@ -3,7 +3,7 @@ import {
   containsNonAtomicStatement,
   splitSqlSpans,
   splitSqlStatements,
-  statementSpanAtOffset,
+  statementSqlAtOffset,
 } from './sqlRunner';
 
 describe('splitSqlStatements', () => {
@@ -29,18 +29,30 @@ describe('splitSqlSpans', () => {
   });
 });
 
-describe('statementSpanAtOffset', () => {
-  it('locates the statement containing the cursor', () => {
-    const sql = 'SELECT 1; SELECT 2;';
-    expect(statementSpanAtOffset(sql, 0)?.sql).toBe('SELECT 1');
-    expect(statementSpanAtOffset(sql, 8)?.sql).toBe('SELECT 1'); // on the `;`
-    expect(statementSpanAtOffset(sql, 12)?.sql).toBe('SELECT 2');
-    expect(statementSpanAtOffset('SELECT 1; SELECT 2', 17)?.sql).toBe('SELECT 2'); // EOF, no trailing `;`
+describe('statementSqlAtOffset', () => {
+  const analysis = (spans: Array<[number, number]>) => ({
+    statements: spans.map(([startOffset, endOffset]) => ({ startOffset, endOffset })) as import('../types/sql').SqlStatementAnalysis[],
+    errors: [],
   });
 
-  it('returns null past the final statement', () => {
-    expect(statementSpanAtOffset('SELECT 1;', 9)).toBeNull(); // after the trailing `;`
-    expect(statementSpanAtOffset('SELECT 1;  ', 11)).toBeNull(); // trailing whitespace
+  it('uses parser ranges including semicolon boundaries and leading whitespace', () => {
+    const sql = 'SELECT 1; SELECT 2;';
+    const parsed = analysis([[0, 8], [10, 18]]);
+    expect(statementSqlAtOffset(sql, 0, parsed)).toBe('SELECT 1');
+    expect(statementSqlAtOffset(sql, 8, parsed)).toBe('SELECT 1');
+    expect(statementSqlAtOffset(sql, 9, parsed)).toBe('SELECT 2');
+    expect(statementSqlAtOffset(sql, 12, parsed)).toBe('SELECT 2');
+    expect(statementSqlAtOffset(sql, sql.length, parsed)).toBe('');
+  });
+
+  it('keeps the complete procedure when the cursor is on an internal DELETE', () => {
+    const sql = 'CREATE OR REPLACE PROCEDURE p AS BEGIN INSERT INTO t VALUES(1); DELETE FROM t; END;';
+    expect(statementSqlAtOffset(sql, sql.indexOf('DELETE'), analysis([[0, sql.length]]))).toBe(sql);
+  });
+
+  it('does not execute a fallback script if parsing fails or cursor is outside statements', () => {
+    expect(() => statementSqlAtOffset('bad SQL', 2, { statements: [], errors: [{ line: 1, column: 0, message: 'Invalid SQL' }] })).toThrow('Invalid SQL');
+    expect(statementSqlAtOffset('SELECT 1;  ', 11, analysis([[0, 8]]))).toBe('');
   });
 });
 
@@ -64,4 +76,12 @@ describe('containsNonAtomicStatement', () => {
   it('returns true when any statement in a mixed script is non-atomic', () => {
     expect(containsNonAtomicStatement('SELECT 1; DROP TABLE demo;')).toBe(true);
   });
+});
+
+it('honors MySQL escapes, backticks and hash comments for mode hints', () => {
+  expect(splitSqlStatements(String.raw`SELECT 'it\'s;a'; SELECT 2;`, true))
+    .toEqual([String.raw`SELECT 'it\'s;a'`, 'SELECT 2']);
+  expect(splitSqlStatements('SELECT `a;b`; # ignored;\nSELECT 2;', true))
+    .toEqual(['SELECT `a;b`', '# ignored;\nSELECT 2']);
+  expect(containsNonAtomicStatement('# ignored;\nSELECT 1;', true)).toBe(false);
 });

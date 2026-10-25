@@ -9,7 +9,14 @@ import { EXPLORER_SQL_OBJECT_CHANGED } from '../constants/explorer';
  * to be active. Lets both the SQL editor (Home) and the "Run SQL Script" dialog
  * run a script and stream its outcome into the workspace Output/Results panel.
  */
-let currentExecutionId: string | null = null;
+interface ActiveSqlExecution {
+  executionId: string;
+  connectionId: number;
+  databaseName?: string | null;
+  schemaName?: string | null;
+}
+
+let currentExecution: ActiveSqlExecution | null = null;
 
 export interface RunSqlParams {
   connectionId: number;
@@ -23,12 +30,6 @@ export interface RunSqlParams {
   maxRows?: number;
 }
 
-interface StopSqlParams {
-  connectionId: number;
-  databaseName?: string | null;
-  schemaName?: string | null;
-}
-
 interface SqlRunState {
   executeResult: ExecuteSqlResponse | null;
   scriptResults: ExecuteSqlResponse[];
@@ -36,7 +37,7 @@ interface SqlRunState {
   isResultsVisible: boolean;
   cancelStatus: string | null;
   runSql: (params: RunSqlParams) => Promise<void>;
-  stopSql: (params: StopSqlParams) => Promise<void>;
+  stopSql: () => Promise<void>;
   setResultsVisible: (visible: boolean) => void;
 }
 
@@ -49,10 +50,10 @@ export const useSqlRunStore = create<SqlRunState>((set) => ({
 
   runSql: async (params) => {
     const { connectionId, databaseName, schemaName, dbType, sql, mode, timeoutMs, maxRows } = params;
-    if (!sql || !connectionId) return;
+    if (!sql || !connectionId || currentExecution) return;
 
     const executionId = crypto.randomUUID();
-    currentExecutionId = executionId;
+    currentExecution = { executionId, connectionId, databaseName, schemaName };
     set({
       isRunning: true,
       cancelStatus: null,
@@ -73,9 +74,8 @@ export const useSqlRunStore = create<SqlRunState>((set) => ({
         executionId,
       });
 
-      // A newer run has superseded this one; discard its stale outcome so it
-      // does not overwrite the newer run's state.
-      if (currentExecutionId !== executionId) return;
+      // Ignore outcomes if this execution is no longer active.
+      if (currentExecution?.executionId !== executionId) return;
 
       set({ scriptResults: results });
 
@@ -123,7 +123,7 @@ export const useSqlRunStore = create<SqlRunState>((set) => ({
           .catch(() => undefined);
       }
     } catch (err: unknown) {
-      if (currentExecutionId !== executionId) return;
+      if (currentExecution?.executionId !== executionId) return;
       set({
         executeResult: {
           success: false,
@@ -137,22 +137,24 @@ export const useSqlRunStore = create<SqlRunState>((set) => ({
       });
     } finally {
       // Only the latest run may clear the shared running state.
-      if (currentExecutionId === executionId) {
-        currentExecutionId = null;
+      if (currentExecution?.executionId === executionId) {
+        currentExecution = null;
         set({ isRunning: false });
       }
     }
   },
 
-  stopSql: async (params) => {
-    if (!currentExecutionId || !params.connectionId) return;
+  stopSql: async () => {
+    const execution = currentExecution;
+    if (!execution) return;
     try {
       const outcome = await sqlExecutionService.cancelExecution({
-        connectionId: params.connectionId,
-        databaseName: params.databaseName ?? undefined,
-        schemaName: params.schemaName ?? undefined,
-        executionId: currentExecutionId,
+        connectionId: execution.connectionId,
+        databaseName: execution.databaseName ?? undefined,
+        schemaName: execution.schemaName ?? undefined,
+        executionId: execution.executionId,
       });
+      if (currentExecution !== execution) return;
       set({
         cancelStatus:
           outcome === 'CANCEL_REQUESTED'
@@ -162,6 +164,7 @@ export const useSqlRunStore = create<SqlRunState>((set) => ({
               : 'No active database statement to cancel',
       });
     } catch (error) {
+      if (currentExecution !== execution) return;
       set({ cancelStatus: `Cancel request failed: ${String(error)}` });
     }
   },

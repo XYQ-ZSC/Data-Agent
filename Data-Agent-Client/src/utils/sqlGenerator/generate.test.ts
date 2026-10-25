@@ -135,3 +135,25 @@ describe('dialect quoting', () => {
     expect(generateSql(request({}), mysql).sql).toContain('`app`.`users`');
   });
 });
+
+describe('UPDATE fallback and console transactions', () => {
+  it('generates valid SET assignments without a primary key', () => {
+    const result = generateSql(request({ statementType: 'UPDATE', pkColumns: [] }), mysql);
+    expect(result.sql).toContain("SET\n  `id` = 1,");
+    expect(result.sql).toContain("WHERE\n  `id` = 1 AND");
+    expect(result.sql).not.toContain('SET\n\nWHERE');
+  });
+
+  it('handles a table containing only key columns', () => {
+    const result = generateSql(request({ statementType: 'UPDATE', columns: ['id'], rows: [[1]] }), mysql);
+    expect(result.sql).toBe('UPDATE `app`.`users`\nSET\n  `id` = 1\nWHERE\n  `id` = 1;');
+  });
+
+  it.each([mysql, dm])('keeps console SQL compatible with server-managed transactions', (profile) => {
+    const result = generateSql(request({ options: { ...DEFAULT_SQL_GENERATE_OPTIONS, wrapInTransaction: true } }), profile);
+    expect(result.sql).toContain('COMMIT;');
+    expect(result.consoleSql).not.toMatch(/\b(COMMIT|BEGIN|START TRANSACTION)\b/);
+    expect(result.consoleSql).toMatch(/^INSERT INTO/);
+    expect(result.statementCount).toBe(1);
+  });
+});

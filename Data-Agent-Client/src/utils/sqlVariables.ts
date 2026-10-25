@@ -16,7 +16,7 @@ interface Occurrence {
   name: string;
   start: number;
   end: number;
-  stringLiteral: boolean;
+  quote: string | null;
 }
 
 const PLACEHOLDER = /^\$\{([A-Za-z_][A-Za-z0-9_]*)\}/;
@@ -38,7 +38,6 @@ function scanQuoted(
   start: number,
   quote: string,
   mysql: boolean,
-  stringLiteral: boolean,
   occurrences: Occurrence[],
 ): number {
   let i = start + 1;
@@ -64,7 +63,7 @@ function scanQuoted(
           name: match[1],
           start: i,
           end: i + match[0].length,
-          stringLiteral,
+          quote,
         });
         i += match[0].length;
         continue;
@@ -80,7 +79,7 @@ function scan(sql: string, mysql: boolean): Occurrence[] {
   let i = 0;
   while (i < sql.length) {
     const char = sql[i];
-    if (char === '-' && sql.startsWith('--', i) && (i + 2 >= sql.length || isSpace(sql[i + 2]))) {
+    if (char === '-' && sql.startsWith('--', i) && (!mysql || i + 2 >= sql.length || isSpace(sql[i + 2]))) {
       i = lineEnd(sql, i + 2);
       continue;
     }
@@ -94,15 +93,13 @@ function scan(sql: string, mysql: boolean): Occurrence[] {
       continue;
     }
     if (char === "'" || char === '"' || char === '`') {
-      // MySQL treats double quotes as string literals; DM treats them as identifiers.
-      const stringLiteral = char === "'" || (char === '"' && mysql);
-      i = scanQuoted(sql, i, char, mysql, stringLiteral, occurrences);
+      i = scanQuoted(sql, i, char, mysql, occurrences);
       continue;
     }
     if (char === '$') {
       const match = PLACEHOLDER.exec(sql.slice(i));
       if (match) {
-        occurrences.push({ name: match[1], start: i, end: i + match[0].length, stringLiteral: false });
+        occurrences.push({ name: match[1], start: i, end: i + match[0].length, quote: null });
         i += match[0].length;
         continue;
       }
@@ -112,10 +109,10 @@ function scan(sql: string, mysql: boolean): Occurrence[] {
   return occurrences;
 }
 
-function escapeStringLiteral(value: string, mysql: boolean): string {
-  const quoted = value.replace(/'/g, "''");
+function escapeQuotedValue(value: string, quote: string, mysql: boolean): string {
+  const quoted = value.split(quote).join(quote + quote);
   // MySQL also treats a backslash as an escape character inside string literals.
-  return mysql ? quoted.replace(/\\/g, '\\\\') : quoted;
+  return mysql && quote !== '`' ? quoted.replace(/\\/g, '\\\\') : quoted;
 }
 
 /** Unique parameter names in first-appearance order, with their total occurrence count. */
@@ -132,16 +129,29 @@ export function extractSqlVariables(sql: string, mysql: boolean): SqlVariable[] 
  * placeholders untouched. Values inside string literals are escaped.
  */
 export function substituteSqlVariables(sql: string, values: Record<string, string>, mysql: boolean): string {
+  return substituteSqlVariablesAtOffset(sql, values, mysql).sql;
+}
+
+/** Keep the cursor in the same statement after variable replacement changes lengths. */
+export function substituteSqlVariablesAtOffset(
+  sql: string, values: Record<string, string>, mysql: boolean, cursorOffset?: number,
+): { sql: string; cursorOffset?: number } {
   const occurrences = scan(sql ?? '', mysql).filter(occurrence =>
     Object.prototype.hasOwnProperty.call(values, occurrence.name));
-  if (occurrences.length === 0) return sql ?? '';
+  if (occurrences.length === 0) return { sql: sql ?? '', cursorOffset };
   let output = '';
   let cursor = 0;
+  let adjustedOffset = cursorOffset;
   for (const occurrence of occurrences) {
     output += (sql ?? '').slice(cursor, occurrence.start);
     const value = values[occurrence.name] ?? '';
-    output += occurrence.stringLiteral ? escapeStringLiteral(value, mysql) : value;
+    const replacement = occurrence.quote ? escapeQuotedValue(value, occurrence.quote, mysql) : value;
+    if (cursorOffset !== undefined && adjustedOffset !== undefined) {
+      if (occurrence.end <= cursorOffset) adjustedOffset += replacement.length - (occurrence.end - occurrence.start);
+      else if (occurrence.start < cursorOffset) adjustedOffset = output.length;
+    }
+    output += replacement;
     cursor = occurrence.end;
   }
-  return output + (sql ?? '').slice(cursor);
+  return { sql: output + (sql ?? '').slice(cursor), cursorOffset: adjustedOffset };
 }

@@ -673,6 +673,8 @@ export const I18N_KEYS = {
 
   // Workspace keys
   WORKSPACE: {
+    STATEMENT_ANALYSIS_FAILED: 'workspace.statement_analysis_failed',
+    SQL_RUNNING: 'workspace.sql_running',
     TAB_CLOSE: 'workspace.tab_close',
     TAB_CLOSE_LEFT: 'workspace.tab_close_left',
     TAB_CLOSE_RIGHT: 'workspace.tab_close_right',

@@ -125,13 +125,14 @@ export function SqlGeneratorDialog({
       id: `console-${Date.now()}`,
       name: tabName,
       type: 'file',
-      content: generated.sql,
+      content: generated.consoleSql,
       metadata: {
         connectionId: metadata.connectionId,
         connectionName: metadata.connectionName,
         databaseName: metadata.databaseName,
         schemaName: metadata.schemaName,
         dbType: metadata.dbType,
+        sqlBatchMode: options.wrapInTransaction ? 'ATOMIC' : undefined,
       },
     });
     onOpenChange(false);

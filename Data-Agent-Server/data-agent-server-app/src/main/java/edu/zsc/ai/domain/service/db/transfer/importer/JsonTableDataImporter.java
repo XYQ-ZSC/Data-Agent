@@ -66,7 +66,11 @@ public class JsonTableDataImporter extends AbstractTableDataImporter {
                 if (headers.isEmpty()) return PeekResult.empty();
 
                 List<String[]> samples = new ArrayList<>();
-                samples.add(firstRow.values().toArray(new String[0]));
+                Map<String, Integer> fieldIndexByName = new HashMap<>();
+                for (int i = 0; i < headers.size(); i++) {
+                    fieldIndexByName.put(headers.get(i).toLowerCase(Locale.ROOT), i);
+                }
+                samples.add(sampleValues(firstRow, fieldIndexByName, 1));
                 int row = 1;
                 while (samples.size() < InferColumnTypeSupport.SAMPLE_ROW_LIMIT) {
                     JsonToken t = parser.nextToken();
@@ -74,7 +78,7 @@ public class JsonTableDataImporter extends AbstractTableDataImporter {
                     if (t != JsonToken.START_OBJECT) break;
                     row++;
                     JsonRow r = readJsonRow(parser, row);
-                    samples.add(r.values().toArray(new String[0]));
+                    samples.add(sampleValues(r, fieldIndexByName, row));
                 }
                 // Return the full bytes so the caller re-parses from a fresh stream
                 // (the whole file no longer fits a bounded pushback buffer).
@@ -168,6 +172,19 @@ public class JsonTableDataImporter extends AbstractTableDataImporter {
     }
 
     // --- JSON row parsing ---
+
+    private String[] sampleValues(JsonRow row, Map<String, Integer> fieldIndexByName, int fileRow) {
+        String[] values = new String[fieldIndexByName.size()];
+        for (int i = 0; i < row.names().size(); i++) {
+            Integer index = fieldIndexByName.get(row.names().get(i).toLowerCase(Locale.ROOT));
+            if (index == null) {
+                throw new ImportFailureException(fileRow, "JSON field '" + row.names().get(i)
+                        + "' was not present in the first row object");
+            }
+            values[index] = row.values().get(i);
+        }
+        return values;
+    }
 
     /** One JSON row object: field names in file order and their text values (null for JSON null). */
     private record JsonRow(List<String> names, List<String> values) {
