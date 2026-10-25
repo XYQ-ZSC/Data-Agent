@@ -21,3 +21,16 @@ export interface ExplorerNode {
   /** Raw object name for API calls when display name differs, e.g. trigger name without " (on tableName)" */
   objectName?: string;
 }
+
+/** Target of a right-clicked DB/schema/folder node for DDL generation. */
+export interface SqlScriptTarget {
+  connectionId: number;
+  connectionName: string;
+  databaseName?: string | null;
+  schemaName?: string | null;
+  dbType?: string;
+  /** Human-readable "@host/db/schema" path shown in the dialog. */
+  targetPath: string;
+  /** Object scope for the DDL generator: whole schema, or a specific folder's objects. */
+  scope?: 'all' | 'tables' | 'views' | 'routines';
+}

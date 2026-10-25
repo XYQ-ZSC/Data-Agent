@@ -14,7 +14,7 @@ import { useRenameActions } from '../../hooks/useRenameActions';
 import { I18N_KEYS } from '../../constants/i18nKeys';
 import { DataAttributes } from '../../constants/dataAttributes';
 import { EXPLORER_SQL_OBJECT_CHANGED, ExplorerNodeType, FolderName } from '../../constants/explorer';
-import type { ExplorerNode } from '../../types/explorer';
+import type { ExplorerNode, SqlScriptTarget } from '../../types/explorer';
 import { ExplorerHeader } from './ExplorerHeader';
 import { ExplorerTree, type ExplorerTreeHandle } from './ExplorerTree';
 import { ExplorerDialogs } from './ExplorerDialogs';
@@ -26,6 +26,8 @@ import { BatchImportDialog } from './BatchImportDialog';
 import type { BatchImportParams } from './BatchImportDialog';
 import { ImportDataDialog } from './ImportDataDialog';
 import type { ImportDataParams } from './ImportDataDialog';
+import { SchemaDdlGeneratorDialog } from './SchemaDdlGeneratorDialog';
+import { RunSqlScriptDialog } from './RunSqlScriptDialog';
 
 export function DatabaseExplorer() {
   const { t } = useTranslation();
@@ -116,7 +118,7 @@ export function DatabaseExplorer() {
   });
 
   // Data view actions
-  const { handleViewDdl, handleViewData, handleTableOrViewDoubleClick, handleOpenQueryConsole, handleCreateTable, handleOpenErDiagram, getDdlConfig } = useDataViewActions({
+  const { handleViewDdl, handleGenerateIndexes, handleViewData, handleTableOrViewDoubleClick, handleOpenQueryConsole, handleCreateTable, handleOpenErDiagram, getDdlConfig, resolveConsoleContext } = useDataViewActions({
     setSelectedDdlNode,
     setDdlDialogOpen,
     setTableDataDialogOpen,
@@ -182,6 +184,7 @@ export function DatabaseExplorer() {
   // Batch import wizard (right-click the tables folder)
   const [batchImportOpen, setBatchImportOpen] = useState(false);
   const [batchImportParams, setBatchImportParams] = useState<BatchImportParams | null>(null);
+  const [batchImportTargetNodeId, setBatchImportTargetNodeId] = useState<string | null>(null);
   const handleImportTablesWizard = (node: ExplorerNode) => {
     const conn = node.dbConnection ?? connections.find((c) => String(c.id) === node.connectionId);
     const catalog = node.catalog ?? conn?.database ?? '';
@@ -190,6 +193,7 @@ export function DatabaseExplorer() {
       catalog: catalog || undefined,
       schema: node.schema || undefined,
     });
+    setBatchImportTargetNodeId(node.id ?? null);
     setBatchImportOpen(true);
   };
 
@@ -209,6 +213,55 @@ export function DatabaseExplorer() {
       schema: node.schema || undefined,
     });
     setImportDialogOpen(true);
+  };
+
+  // SQL script (right-click a database/schema node): run a .sql file, or generate DDL.
+  const [sqlGeneratorOpen, setSqlGeneratorOpen] = useState(false);
+  const [runSqlScriptOpen, setRunSqlScriptOpen] = useState(false);
+  const [sqlScriptTarget, setSqlScriptTarget] = useState<SqlScriptTarget | null>(null);
+
+  const buildSqlScriptTarget = (node: ExplorerNode): SqlScriptTarget | null => {
+    const context = resolveConsoleContext(node);
+    if (!context) return null;
+    const conn = node.dbConnection ?? connections.find((c) => c.id === context.connectionId);
+    const targetPath = [`@${conn?.host ?? ''}`, context.databaseName, context.schemaName]
+      .filter(Boolean).join('/');
+    const scope =
+      node.type === ExplorerNodeType.FOLDER && node.folderName === FolderName.TABLES ? 'tables'
+      : node.type === ExplorerNodeType.FOLDER && node.folderName === FolderName.VIEWS ? 'views'
+      : node.type === ExplorerNodeType.FOLDER && node.folderName === FolderName.ROUTINES ? 'routines'
+      : 'all';
+    return {
+      connectionId: context.connectionId,
+      connectionName: context.connectionName,
+      databaseName: context.databaseName,
+      schemaName: context.schemaName,
+      dbType: context.dbType,
+      targetPath,
+      scope,
+    };
+  };
+
+  const handleSqlGenerator = (node: ExplorerNode) => {
+    // Index nodes and the "indexes" folder have no backend DDL endpoint, so build
+    // CREATE INDEX statements client-side from index metadata.
+    if (node.type === ExplorerNodeType.INDEX
+      || (node.type === ExplorerNodeType.FOLDER && node.folderName === FolderName.INDEXES)) {
+      void handleGenerateIndexes(node);
+      return;
+    }
+    // Database/schema/folder nodes open the multi-object DDL generator dialog.
+    const target = buildSqlScriptTarget(node);
+    if (!target) return;
+    setSqlScriptTarget(target);
+    setSqlGeneratorOpen(true);
+  };
+
+  const handleRunSqlScript = (node: ExplorerNode) => {
+    const target = buildSqlScriptTarget(node);
+    if (!target) return;
+    setSqlScriptTarget(target);
+    setRunSqlScriptOpen(true);
   };
 
   useEffect(() => {
@@ -300,6 +353,8 @@ export function DatabaseExplorer() {
           onRename={handleRename}
           onDelete={handleDelete}
           onOpenQueryConsole={handleOpenQueryConsole}
+          onRunSqlScript={handleRunSqlScript}
+          onSqlGenerator={handleSqlGenerator}
           onCreateTable={handleCreateTable}
           onImportData={handleImportData}
           onExportData={handleExportData}
@@ -367,6 +422,9 @@ export function DatabaseExplorer() {
         open={batchImportOpen}
         onOpenChange={setBatchImportOpen}
         importParams={batchImportParams}
+        onSuccess={() => {
+          if (batchImportTargetNodeId) refreshNodeById(batchImportTargetNodeId);
+        }}
       />
 
       <ImportDataDialog
@@ -374,6 +432,18 @@ export function DatabaseExplorer() {
         onOpenChange={setImportDialogOpen}
         targetTablePath={importTargetPath}
         importParams={importParams}
+      />
+
+      <SchemaDdlGeneratorDialog
+        open={sqlGeneratorOpen}
+        onOpenChange={setSqlGeneratorOpen}
+        target={sqlScriptTarget}
+      />
+
+      <RunSqlScriptDialog
+        open={runSqlScriptOpen}
+        onOpenChange={setRunSqlScriptOpen}
+        target={sqlScriptTarget}
       />
     </div>
   );

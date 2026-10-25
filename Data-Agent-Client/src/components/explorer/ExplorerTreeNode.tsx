@@ -37,6 +37,8 @@ export interface ExplorerTreeNodeProps {
   onRename: (node: ExplorerNode) => void;
   onDelete: (node: ExplorerNode, type: ExplorerNodeType) => void;
   onOpenQueryConsole: (node: ExplorerNode) => void;
+  onRunSqlScript: (node: ExplorerNode) => void;
+  onSqlGenerator: (node: ExplorerNode) => void;
   onCreateTable: (node: ExplorerNode) => void;
   onImportData: (node: ExplorerNode) => void;
   onExportData: (node: ExplorerNode) => void;
@@ -61,6 +63,8 @@ export function ExplorerTreeNode({
   onRename,
   onDelete,
   onOpenQueryConsole,
+  onRunSqlScript,
+  onSqlGenerator,
   onCreateTable,
   onImportData,
   onExportData,
@@ -238,6 +242,8 @@ export function ExplorerTreeNode({
           node={node.data}
           isConnected={isConnected}
           onOpenQueryConsole={onOpenQueryConsole}
+          onRunSqlScript={onRunSqlScript}
+          onSqlGenerator={onSqlGenerator}
           onCreateTable={onCreateTable}
           onOpenErDiagram={onOpenErDiagram}
           onViewDdl={onViewDdl}

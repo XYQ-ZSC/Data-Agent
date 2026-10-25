@@ -23,6 +23,8 @@ interface ExplorerTreeProps {
   onRename: (node: ExplorerNode) => void;
   onDelete: (node: ExplorerNode, type: ExplorerNodeType) => void;
   onOpenQueryConsole: (node: ExplorerNode) => void;
+  onRunSqlScript: (node: ExplorerNode) => void;
+  onSqlGenerator: (node: ExplorerNode) => void;
   onCreateTable: (node: ExplorerNode) => void;
   onImportData: (node: ExplorerNode) => void;
   onExportData: (node: ExplorerNode) => void;
@@ -98,6 +100,8 @@ export const ExplorerTree = forwardRef<ExplorerTreeHandle, ExplorerTreeProps>(fu
   onRename,
   onDelete,
   onOpenQueryConsole,
+  onRunSqlScript,
+  onSqlGenerator,
   onCreateTable,
   onImportData,
   onExportData,
@@ -190,6 +194,8 @@ export const ExplorerTree = forwardRef<ExplorerTreeHandle, ExplorerTreeProps>(fu
         onRename={onRename}
         onDelete={onDelete}
         onOpenQueryConsole={onOpenQueryConsole}
+        onRunSqlScript={onRunSqlScript}
+        onSqlGenerator={onSqlGenerator}
         onCreateTable={onCreateTable}
         onImportData={onImportData}
         onExportData={onExportData}

@@ -1,4 +1,4 @@
-import { Download, FileText, Pencil, Plus, Table, Table2, Trash2, Upload, Waypoints } from 'lucide-react';
+import { Download, FileCode2, FileText, Pencil, Play, Plus, Table, Table2, Trash2, Upload, Waypoints } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import {
   ContextMenuContent,
@@ -16,6 +16,8 @@ interface NodeContextMenuContentProps {
   node: ExplorerNode;
   isConnected: boolean;
   onOpenQueryConsole: (node: ExplorerNode) => void;
+  onRunSqlScript: (node: ExplorerNode) => void;
+  onSqlGenerator: (node: ExplorerNode) => void;
   onCreateTable: (node: ExplorerNode) => void;
   onOpenErDiagram: (node: ExplorerNode) => void;
   onViewDdl: (node: ExplorerNode) => void;
@@ -32,6 +34,8 @@ export function NodeContextMenuContent({
   node,
   isConnected,
   onOpenQueryConsole,
+  onRunSqlScript,
+  onSqlGenerator,
   onCreateTable,
   onOpenErDiagram,
   onViewDdl,
@@ -64,6 +68,8 @@ export function NodeContextMenuContent({
 
   const isDb = node.type === ExplorerNodeType.DB;
 
+  const isSchema = node.type === ExplorerNodeType.SCHEMA;
+
   const isDeletableFolder =
     node.type === ExplorerNodeType.FOLDER &&
     node.folderName &&
@@ -71,6 +77,15 @@ export function NodeContextMenuContent({
 
   const isTablesFolder =
     node.type === ExplorerNodeType.FOLDER && node.folderName === 'tables';
+
+  const isViewsFolder =
+    node.type === ExplorerNodeType.FOLDER && node.folderName === 'views';
+
+  const isRoutinesFolder =
+    node.type === ExplorerNodeType.FOLDER && node.folderName === 'routines';
+
+  const isIndexesFolder =
+    node.type === ExplorerNodeType.FOLDER && node.folderName === 'indexes';
 
   const canCreateTable = isConnected && (isDb || isTablesFolder);
 
@@ -165,6 +180,22 @@ export function NodeContextMenuContent({
         </>
       )}
       {isTableOrView || isColumnOrIndexOrKey ? (hasDataOperations = true) : null}
+
+      {/* 3.1 Run SQL Script - run a .sql script file against this database/schema/tables folder */}
+      {isConnected && (isDb || isSchema || isTablesFolder) && (
+        <ContextMenuItem onSelect={() => onRunSqlScript(node)}>
+          <Play className="w-3.5 h-3.5 mr-2" />
+          {t(I18N_KEYS.EXPLORER.RUN_SQL_SCRIPT)}
+        </ContextMenuItem>
+      )}
+
+      {/* 3.2 SQL Generator - generate DDL for databases, schemas, folders and non-primary-key indexes */}
+      {isConnected && (isDb || isSchema || isTablesFolder || isViewsFolder || isRoutinesFolder || (node.type === ExplorerNodeType.INDEX && !node.isPrimaryKey) || isIndexesFolder) && (
+        <ContextMenuItem onSelect={() => onSqlGenerator(node)}>
+          <FileCode2 className="w-3.5 h-3.5 mr-2" />
+          {t(I18N_KEYS.EXPLORER.SQL_GENERATOR)}
+        </ContextMenuItem>
+      )}
 
       {/* 3.5 Import/Export Data - for tables (UI placeholder, functionality to be implemented later) */}
       {node.type === ExplorerNodeType.TABLE && (
