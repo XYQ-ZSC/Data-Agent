@@ -287,7 +287,7 @@ class ModelRoutingTest {
     @Test void deploymentTemplateBindsToSupportedStartupConfiguration() throws Exception {
         var environment = new MockEnvironment();
         var loader = new org.springframework.boot.env.YamlPropertySourceLoader();
-        var sources = loader.load("multi-provider-example", new org.springframework.core.io.ClassPathResource("application-multi-provider.example.yml"));
+        var sources = loader.load("model-routing-template", new org.springframework.core.io.ClassPathResource("config-templates/model-routing.yml"));
         sources.forEach(environment.getPropertySources()::addLast);
         var sample = org.springframework.boot.context.properties.bind.Binder.get(environment)
                 .bind("ai", org.springframework.boot.context.properties.bind.Bindable.of(MultiProviderProperties.class)).get();
