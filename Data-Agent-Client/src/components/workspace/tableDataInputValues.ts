@@ -11,7 +11,7 @@ export function normalizeEditedCellInput(rawValue: unknown, oldValue: unknown, i
   if (rawValue == null) return null;
   const text = String(rawValue);
   if (text.toUpperCase() === 'NULL' || (!isDm && text === '')) return null;
-  if (typeof oldValue === 'number' && text !== '') {
+  if (!isDm && typeof oldValue === 'number' && text !== '') {
     const parsed = Number(text);
     return Number.isFinite(parsed) ? parsed : text;
   }

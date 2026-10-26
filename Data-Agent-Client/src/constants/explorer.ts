@@ -13,6 +13,8 @@ export const ExplorerNodeType = {
   FUNCTION: 'function',
   PROCEDURE: 'procedure',
   TRIGGER: 'trigger',
+  SEQUENCE: 'sequence',
+  CONSTRAINT: 'constraint',
   COLUMN: 'column',
   INDEX: 'index',
   KEY: 'key',
@@ -27,6 +29,8 @@ export const FolderName = {
   VIEWS: 'views',
   ROUTINES: 'routines',
   TRIGGERS: 'triggers',
+  SEQUENCES: 'sequences',
+  CONSTRAINTS: 'constraints',
   COLUMNS: 'columns',
   KEYS: 'keys',
   INDEXES: 'indexes',
@@ -40,6 +44,8 @@ export const ExplorerI18nKeys = {
   FOLDER_VIEWS: 'explorer.folder_views',
   FOLDER_ROUTINES: 'explorer.folder_routines',
   FOLDER_TRIGGERS: 'explorer.folder_triggers',
+  FOLDER_SEQUENCES: 'explorer.folder_sequences',
+  FOLDER_CONSTRAINTS: 'explorer.folder_constraints',
   FOLDER_COLUMNS: 'explorer.folder_columns',
   FOLDER_KEYS: 'explorer.folder_keys',
   FOLDER_INDEXES: 'explorer.folder_indexes',
@@ -57,6 +63,8 @@ export const ExplorerIdPrefix = {
   FUNCTION: '-function-',
   PROCEDURE: '-procedure-',
   TRIGGER: '-trigger-',
+  SEQUENCE: '-sequence-',
+  CONSTRAINT: '-constraint-',
   COLUMN: '-column-',
   KEY: '-key-',
   INDEX: '-index-',
@@ -89,6 +97,8 @@ export const INDEX_UNIQUE_SUFFIX = ' UNIQUE';
 
 /** Query key for connections. */
 export const QUERY_KEY_CONNECTIONS = ['connections'] as const;
+
+export const EXPLORER_SQL_OBJECT_CHANGED = 'explorer-sql-object-changed';
 
 /** DDL viewer constants. */
 export const DdlViewerConfig = {

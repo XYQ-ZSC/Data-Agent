@@ -3,44 +3,50 @@ import { Database, Download, Trash2, Maximize2 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { useTranslation } from 'react-i18next';
 import { I18N_KEYS } from '../../constants/i18nKeys';
-import type { ExecuteSqlMessage, ExecuteSqlResponse, ExecuteSqlResultSet } from '../../types/sql';
+import type { ExecuteSqlMessage, ExecuteSqlResponse } from '../../types/sql';
 import { SqlCodeBlock } from '../common/SqlCodeBlock';
 import { buildCsvFromResult, downloadCsv } from '../../utils/exportResult';
+import { formatDmExecutionPlan } from '../../utils/dmExecutionPlan';
 import { useToast } from '../../hooks/useToast';
 import {
   Panel,
   Group as PanelGroup,
   Separator as PanelResizeHandle
 } from 'react-resizable-panels';
+import { extractResultSet, statementStatusColor, statementStatusLabel } from './statementStatus';
+import { StatementResultRow } from './StatementResultRow';
 
 interface ResultsPanelProps {
   isVisible: boolean;
   onClose: () => void;
   executeResult?: ExecuteSqlResponse | null;
+  scriptResults?: ExecuteSqlResponse[];
+  cancelStatus?: string | null;
   isRunning?: boolean;
   children: React.ReactNode;
 }
 
-export function ResultsPanel({ isVisible, onClose, executeResult, isRunning = false, children }: ResultsPanelProps) {
+export function ResultsPanel({ isVisible, onClose, executeResult: singleResult, scriptResults, cancelStatus, isRunning = false, children }: ResultsPanelProps) {
   const { t } = useTranslation();
   const toast = useToast();
   const [activeTab, setActiveTab] = useState<'result' | 'output'>('output');
+  const [selectedStatement, setSelectedStatement] = useState(0);
+  const executeResult = scriptResults?.[selectedStatement] ?? singleResult;
 
-  const primaryResultSet: ExecuteSqlResultSet | null | undefined =
-    executeResult?.resultSet ??
-    executeResult?.results?.find(r => r.type === 'QUERY')?.resultSet;
+  useEffect(() => setSelectedStatement(0), [scriptResults]);
 
-  const resultHeaders =
-    primaryResultSet?.columns?.map(c => c.label || c.name || '').filter(Boolean) ??
-    executeResult?.headers ??
-    [];
+  const scriptSummary = scriptResults && scriptResults.length > 1
+    ? `${scriptResults.length} statements · ${scriptResults.filter(r => r.success).length} ok · ${scriptResults.filter(r => !r.success).length} failed`
+    : null;
 
-  const resultRows = primaryResultSet?.rows ?? executeResult?.rows ?? [];
+  const { headers: resultHeaders, rows: resultRows } = extractResultSet(executeResult);
+  const isDmExecutionPlan = /^\s*EXPLAIN\b/i.test(executeResult?.executedSql || executeResult?.originalSql || '')
+    && resultHeaders.length === 1 && resultHeaders[0] === 'Execution Plan';
 
   // Determine if Results tab should be shown (SELECT query with data)
   const hasResultTab = !!(
     executeResult?.success &&
-    (executeResult?.query || executeResult?.type === 'QUERY' || !!primaryResultSet?.columns?.length)
+    (executeResult?.query || executeResult?.type === 'QUERY' || resultHeaders.length > 0)
   );
 
   // Can export when we have a result set (headers; rows may be empty)
@@ -68,22 +74,12 @@ export function ResultsPanel({ isVisible, onClose, executeResult, isRunning = fa
 
   const getStatusIndicatorColor = () => {
     if (isRunning) return 'bg-amber-500 animate-pulse';
-    if (!executeResult) return 'bg-gray-500';
-    if (executeResult.success) return 'bg-green-500';
-    return 'bg-red-500';
+    return statementStatusColor(executeResult);
   };
 
   const getStatusText = () => {
     if (isRunning) return 'Running...';
-    if (!executeResult) return 'Ready';
-    if (!executeResult.success) return 'Error';
-    const duration = executeResult.executionInfo?.durationMs ?? executeResult.executionTimeMs;
-    const fetched = executeResult.executionInfo?.fetchRows ?? resultRows.length;
-    const affected = executeResult.executionInfo?.affectedRows ?? executeResult.affectedRows;
-    if (executeResult.query || executeResult.type === 'QUERY') {
-      return `${fetched} rows | ${duration}ms`;
-    }
-    return `${affected} affected | ${duration}ms`;
+    return statementStatusLabel(executeResult);
   };
 
   const outputMessages: ExecuteSqlMessage[] =
@@ -141,6 +137,25 @@ export function ResultsPanel({ isVisible, onClose, executeResult, isRunning = fa
       <Panel defaultSize="30%" minSize="15%" className="workbench-results-panel flex flex-col shrink-0 border-t theme-border relative">
         {/* Toolbar */}
         <div className="workbench-header flex h-11 items-center px-3 shrink-0">
+          {(scriptResults?.length ?? 0) > 1 && (
+            <>
+              <select
+                aria-label="Script statement result"
+                value={selectedStatement}
+                onChange={event => setSelectedStatement(Number(event.target.value))}
+                className="workbench-pill mr-2 text-[10px]"
+              >
+                {scriptResults?.map((result, index) => (
+                  <option key={index} value={index}>
+                    {index + 1}. {result.statementState ?? (result.success ? 'EXECUTED' : 'FAILED')}
+                  </option>
+                ))}
+              </select>
+              {scriptSummary && (
+                <span className="mr-2 text-[10px] theme-text-secondary">{scriptSummary}</span>
+              )}
+            </>
+          )}
           <div className="flex space-x-1 h-full">
             {hasResultTab && (
               <button
@@ -205,9 +220,19 @@ export function ResultsPanel({ isVisible, onClose, executeResult, isRunning = fa
         {/* Content Area */}
         <div className="flex-1 overflow-hidden bg-transparent relative">
           {activeTab === 'result' && hasResultTab && executeResult ? (
-            // Results Table
             <div className="overflow-auto h-full">
-              {resultHeaders.length > 0 ? (
+              {isDmExecutionPlan ? (
+                <div className="text-[11px] theme-text-primary">
+                  <div className="sticky top-0 px-3 py-1.5 font-medium theme-text-secondary border-b theme-border bg-[color:var(--bg-panel)]">
+                    Execution Plan
+                  </div>
+                  {resultRows.map((row, index) => (
+                    <pre key={index} className="px-3 py-2 font-mono leading-5 whitespace-pre-wrap break-words border-b theme-border">
+                      {formatDmExecutionPlan(String(row[0] ?? ''))}
+                    </pre>
+                  ))}
+                </div>
+              ) : resultHeaders.length > 0 ? (
                 <table className="text-[11px] w-full border-collapse">
                   <thead className="sticky top-0 bg-[color:var(--bg-panel)]/92 backdrop-blur-xl">
                     <tr>
@@ -262,10 +287,26 @@ export function ResultsPanel({ isVisible, onClose, executeResult, isRunning = fa
               {isRunning ? (
                 <div className="flex items-center space-x-2 text-amber-500">
                   <span className="animate-pulse">●</span>
-                  <span>Running...</span>
+                  <span>{cancelStatus || 'Running...'}</span>
                 </div>
               ) : executeResult ? (
                 <>
+                  {scriptResults && scriptResults.length > 0 && (
+                    <div className="mb-2 space-y-1">
+                      {scriptResults.map((result, index) => (
+                        <StatementResultRow
+                          key={index}
+                          result={result}
+                          index={index}
+                          selected={index === selectedStatement}
+                          onSelect={() => setSelectedStatement(index)}
+                        />
+                      ))}
+                    </div>
+                  )}
+                  {executeResult.executionInfo?.truncated && (
+                    <div className="text-amber-400">Result truncated at the configured row limit.</div>
+                  )}
                   {executeResult.success && (
                     <div className="theme-text-secondary">
                       [{formatTimestamp(executionStartTime)}] 已连接

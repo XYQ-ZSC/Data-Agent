@@ -15,7 +15,6 @@ import { routerConfig } from "./router.tsx";
 import { ROUTES } from "./constants/routes";
 import { AuthModalType } from "./constants/modal";
 import { DataAttributes } from "./constants/dataAttributes";
-import { useOAuthCallbackFromUrl } from "./hooks/useOAuthCallbackFromUrl";
 import { WorkspaceLayout } from "./components/layouts/WorkspaceLayout";
 
 function AppRoutes({
@@ -78,13 +77,13 @@ function App() {
     const [showAI, setShowAI] = useState(false);
     const [showExplorer, setShowExplorer] = useState(true);
 
-    // OAuth callback: read token from URL and sync to authStore
-    useOAuthCallbackFromUrl();
-
-    // Fetch supported DB types on mount for connection creation etc.
+    // Wait until the persisted session is available. An earlier unauthenticated
+    // request fails once and leaves the add-database menu stuck on "loading".
+    const accessToken = useAuthStore((state) => state.accessToken);
     useEffect(() => {
+        if (!accessToken) return;
         useWorkspaceStore.getState().fetchSupportedDbTypes();
-    }, []);
+    }, [accessToken]);
 
     // Hydrate user profile (organizations, etc.) when session exists
     useEffect(() => {

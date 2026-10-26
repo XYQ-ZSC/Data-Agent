@@ -4,36 +4,60 @@ import edu.zsc.ai.plugin.base.AbstractDatabasePlugin;
 import edu.zsc.ai.plugin.capability.ColumnManager;
 import edu.zsc.ai.plugin.capability.CommandExecutor;
 import edu.zsc.ai.plugin.capability.ConnectionManager;
+import edu.zsc.ai.plugin.capability.ConstraintManager;
 import edu.zsc.ai.plugin.capability.FunctionManager;
 import edu.zsc.ai.plugin.capability.IndexManager;
 import edu.zsc.ai.plugin.capability.ProcedureManager;
 import edu.zsc.ai.plugin.capability.SchemaManager;
+import edu.zsc.ai.plugin.capability.SequenceManager;
+import edu.zsc.ai.plugin.capability.SqlCompleter;
 import edu.zsc.ai.plugin.capability.SqlSplitter;
+import edu.zsc.ai.plugin.capability.SqlAnalyzer;
+import edu.zsc.ai.plugin.capability.SqlValidator;
+import edu.zsc.ai.plugin.capability.SqlIdentifierEscaper;
 import edu.zsc.ai.plugin.capability.TableManager;
 import edu.zsc.ai.plugin.capability.TriggerManager;
 import edu.zsc.ai.plugin.capability.ViewManager;
 import edu.zsc.ai.plugin.connection.ConnectionConfig;
+import edu.zsc.ai.plugin.dm.constant.DmKeywords;
 import edu.zsc.ai.plugin.dm.executor.DmSqlExecutor;
 import edu.zsc.ai.plugin.dm.manager.DmColumnManager;
+import edu.zsc.ai.plugin.dm.manager.DmConstraintManager;
 import edu.zsc.ai.plugin.dm.manager.DmConnectionManager;
 import edu.zsc.ai.plugin.dm.manager.DmFunctionManager;
 import edu.zsc.ai.plugin.dm.manager.DmIndexManager;
 import edu.zsc.ai.plugin.dm.manager.DmProcedureManager;
+import edu.zsc.ai.plugin.dm.manager.DmSequenceManager;
 import edu.zsc.ai.plugin.dm.manager.DmTableManager;
 import edu.zsc.ai.plugin.dm.manager.DmTriggerManager;
 import edu.zsc.ai.plugin.dm.manager.DmViewManager;
 import edu.zsc.ai.plugin.dm.support.DmMetadataSupport;
+import edu.zsc.ai.plugin.dm.support.DmCompletionMetadata;
 import edu.zsc.ai.plugin.dm.support.DmObjectQuerySupport;
 import edu.zsc.ai.plugin.driver.MavenCoordinates;
 import edu.zsc.ai.plugin.model.command.sql.SqlCommandRequest;
 import edu.zsc.ai.plugin.model.command.sql.SqlCommandResult;
 import edu.zsc.ai.plugin.model.db.TableRowValue;
 import edu.zsc.ai.plugin.model.metadata.ColumnMetadata;
+import edu.zsc.ai.plugin.model.metadata.ConstraintMetadata;
 import edu.zsc.ai.plugin.model.metadata.FunctionMetadata;
 import edu.zsc.ai.plugin.model.metadata.IndexMetadata;
 import edu.zsc.ai.plugin.model.metadata.ProcedureMetadata;
+import edu.zsc.ai.plugin.model.metadata.SequenceMetadata;
 import edu.zsc.ai.plugin.model.metadata.TriggerMetadata;
-import edu.zsc.ai.plugin.dm.sql.DmSqlSplitter;
+import edu.zsc.ai.plugin.dm.parser.DmCompletionParser;
+import edu.zsc.ai.plugin.dm.parser.DmSqlParser;
+import edu.zsc.ai.plugin.dm.util.DmIdentifierEscaper;
+import edu.zsc.ai.plugin.dm.value.DmValueProcessor;
+import edu.zsc.ai.plugin.model.sql.CompletionContext;
+import edu.zsc.ai.plugin.model.sql.CompletionFunctionCatalog;
+import edu.zsc.ai.plugin.model.sql.CompletionRoutine;
+import edu.zsc.ai.plugin.model.sql.CompletionSynonym;
+import edu.zsc.ai.plugin.model.sql.SqlType;
+import edu.zsc.ai.plugin.model.sql.SqlValidationResult;
+import edu.zsc.ai.plugin.model.sql.SqlScriptAnalysis;
+import edu.zsc.ai.plugin.value.JdbcValueContext;
+import edu.zsc.ai.plugin.value.ValueProcessor;
 
 import java.sql.Connection;
 import java.sql.DatabaseMetaData;
@@ -49,7 +73,8 @@ import java.util.List;
 public abstract class DefaultDmPlugin extends AbstractDatabasePlugin
         implements ConnectionManager, CommandExecutor<SqlCommandRequest, SqlCommandResult>,
         SchemaManager, TableManager, ViewManager, ColumnManager, IndexManager,
-        FunctionManager, ProcedureManager, TriggerManager, SqlSplitter {
+        FunctionManager, ProcedureManager, TriggerManager, SqlSplitter, SqlValidator, SqlAnalyzer,
+        SqlCompleter, SqlIdentifierEscaper, ValueProcessor, SequenceManager, ConstraintManager {
 
     private final ConnectionManager connectionManager = new DmConnectionManager(
             this::getDriverClassName,
@@ -59,6 +84,7 @@ public abstract class DefaultDmPlugin extends AbstractDatabasePlugin
     private final DmSqlExecutor sqlExecutor = new DmSqlExecutor();
     private final DmMetadataSupport metadataSupport = new DmMetadataSupport();
     private final DmObjectQuerySupport objectQuerySupport = new DmObjectQuerySupport();
+    private final DmCompletionMetadata completionMetadata = new DmCompletionMetadata(objectQuerySupport);
     private final TableManager tableManager = new DmTableManager(metadataSupport);
     private final ViewManager viewManager = new DmViewManager(metadataSupport);
     private final ColumnManager columnManager = new DmColumnManager(metadataSupport);
@@ -66,6 +92,8 @@ public abstract class DefaultDmPlugin extends AbstractDatabasePlugin
     private final FunctionManager functionManager = new DmFunctionManager(objectQuerySupport);
     private final ProcedureManager procedureManager = new DmProcedureManager(objectQuerySupport);
     private final TriggerManager triggerManager = new DmTriggerManager(objectQuerySupport);
+    private final SequenceManager sequenceManager = new DmSequenceManager(objectQuerySupport);
+    private final ConstraintManager constraintManager = new DmConstraintManager(objectQuerySupport);
 
     @Override
     public boolean supportDatabase() {
@@ -177,7 +205,105 @@ public abstract class DefaultDmPlugin extends AbstractDatabasePlugin
 
     @Override
     public List<String> split(String sql) {
-        return DmSqlSplitter.INSTANCE.split(sql);
+        return DmSqlParser.INSTANCE.split(sql);
+    }
+
+    @Override
+    public SqlValidationResult validate(String sql) {
+        return DmSqlParser.INSTANCE.validate(sql);
+    }
+
+    @Override
+    public SqlType classifySql(String sql) {
+        return DmSqlParser.INSTANCE.classifySql(sql);
+    }
+
+    @Override
+    public boolean isTransactionControl(String sql) {
+        return DmSqlParser.INSTANCE.isTransactionControl(sql);
+    }
+
+    @Override
+    public SqlScriptAnalysis analyze(String sql) {
+        return DmSqlParser.INSTANCE.analyze(sql);
+    }
+
+    // ========== SqlCompleter ==========
+
+    @Override
+    public CompletionContext analyzeCompletionContext(String sql, int cursorOffset) {
+        return DmCompletionParser.INSTANCE.analyze(sql, cursorOffset);
+    }
+
+    @Override
+    public List<String> completionKeywords() {
+        return DmKeywords.KEYWORDS;
+    }
+
+    @Override
+    public List<String> completionFunctions() {
+        return DmKeywords.FUNCTIONS;
+    }
+
+    @Override
+    public java.util.Set<String> reservedWords() {
+        return DmKeywords.RESERVED_WORDS;
+    }
+
+    @Override
+    public String identifierInsertText(String name, boolean quoted) {
+        return DmIdentifierEscaper.getInstance().completionIdentifier(name, quoted, reservedWords());
+    }
+
+    @Override
+    public List<edu.zsc.ai.plugin.model.sql.CompletionFunction> functionTemplates() {
+        return DmKeywords.functionTemplates();
+    }
+
+    @Override
+    public CompletionFunctionCatalog functionCatalog(Connection connection) {
+        return completionMetadata.functions(connection);
+    }
+    @Override
+    public List<String> completionPackages(Connection connection, String schema) {
+        return completionMetadata.packages(connection, schema);
+    }
+    @Override
+    public List<CompletionRoutine> completionPackageMembers(Connection connection, String schema, String packageName) {
+        return completionMetadata.members(connection, schema, packageName);
+    }
+    @Override
+    public List<CompletionSynonym> completionSynonyms(Connection connection, String schema) {
+        return completionMetadata.synonyms(connection, schema);
+    }
+    @Override
+    public String completionSchema(Connection connection, String schema) {
+        return objectQuerySupport.resolveSchema(connection, schema);
+    }
+
+    @Override
+    public String escapeIdentifier(String identifier) {
+        return DmIdentifierEscaper.getInstance().escapeIdentifier(identifier);
+    }
+
+    @Override
+    public String quoteIdentifier(String identifier) {
+        return DmIdentifierEscaper.getInstance().quoteIdentifier(identifier);
+    }
+
+    @Override
+    public String escapeStringLiteral(String value) {
+        return DmIdentifierEscaper.getInstance().escapeStringLiteral(value);
+    }
+
+    @Override
+    public String escapeLikePattern(String pattern) {
+        return DmIdentifierEscaper.getInstance().escapeLikePattern(pattern);
+    }
+
+    @Override
+    public Object getJdbcValue(JdbcValueContext context) throws SQLException {
+        return DmValueProcessor.INSTANCE.getJdbcValue(context);
     }
 
     // ========== TableManager ==========
@@ -363,5 +489,41 @@ public abstract class DefaultDmPlugin extends AbstractDatabasePlugin
     @Override
     public void deleteTrigger(Connection connection, String catalog, String schema, String triggerName) {
         triggerManager.deleteTrigger(connection, catalog, schema, triggerName);
+    }
+
+    // ========== SequenceManager ==========
+
+    @Override
+    public List<SequenceMetadata> getSequences(Connection connection, String catalog, String schema) {
+        return sequenceManager.getSequences(connection, catalog, schema);
+    }
+
+    @Override
+    public String getSequenceDdl(Connection connection, String catalog, String schema, String sequenceName) {
+        return sequenceManager.getSequenceDdl(connection, catalog, schema, sequenceName);
+    }
+
+    @Override
+    public void deleteSequence(Connection connection, String catalog, String schema, String sequenceName) {
+        sequenceManager.deleteSequence(connection, catalog, schema, sequenceName);
+    }
+
+    // ========== ConstraintManager ==========
+
+    @Override
+    public List<ConstraintMetadata> getConstraints(Connection connection, String catalog,
+                                                   String schema, String tableName) {
+        return constraintManager.getConstraints(connection, catalog, schema, tableName);
+    }
+
+    @Override
+    public String getConstraintDdl(Connection connection, String catalog, String schema, String constraintName) {
+        return constraintManager.getConstraintDdl(connection, catalog, schema, constraintName);
+    }
+
+    @Override
+    public void deleteConstraint(Connection connection, String catalog, String schema,
+                                 String tableName, String constraintName) {
+        constraintManager.deleteConstraint(connection, catalog, schema, tableName, constraintName);
     }
 }

@@ -238,6 +238,7 @@ export function useConnectionTree() {
           catalog: dbName,
           schema: schemaName,
           t,
+          isDm: node.data.dbConnection?.dbType?.toLowerCase() === 'dm',
         },
         tables,
         views,
@@ -249,7 +250,7 @@ export function useConnectionTree() {
       const isFull = functions !== undefined && procedures !== undefined && triggers !== undefined
         && getCachedExplorerTables(queryClient, connId, dbName, schemaName) !== undefined
         && getCachedExplorerViews(queryClient, connId, dbName, schemaName) !== undefined;
-      return isFull ? 'full' : 'partial';
+      return isFull && node.data.dbConnection?.dbType?.toLowerCase() !== 'dm' ? 'full' : 'partial';
     }
 
     if (node.data.type === ExplorerNodeType.FOLDER && node.data.folderName) {
@@ -359,6 +360,7 @@ export function useConnectionTree() {
             schema: undefined,
             t,
             queryClient,
+            isDm: node.data.dbConnection?.dbType?.toLowerCase() === 'dm',
           });
           updateNodeChildren(node.id, folders);
         }
@@ -378,6 +380,7 @@ export function useConnectionTree() {
           schema: schemaName,
           t,
           queryClient,
+          isDm: node.data.dbConnection?.dbType?.toLowerCase() === 'dm',
         });
         updateNodeChildren(node.id, folders);
         return;
@@ -411,7 +414,14 @@ export function useConnectionTree() {
         const columnsFolder = createFolderNode(node.id, FolderName.COLUMNS, connId, catalog, schema, t, tableName);
         const keysFolder = createFolderNode(node.id, FolderName.KEYS, connId, catalog, schema, t, tableName);
         const indexesFolder = createFolderNode(node.id, FolderName.INDEXES, connId, catalog, schema, t, tableName);
-        updateNodeChildren(node.id, [columnsFolder, keysFolder, indexesFolder]);
+        let rootNode = node;
+        while (rootNode.parent && rootNode.level > 0) rootNode = rootNode.parent;
+        const isDmTable = node.data.type === ExplorerNodeType.TABLE
+          && rootNode.data.dbConnection?.dbType?.toLowerCase() === 'dm';
+        const constraintsFolder = isDmTable
+          ? createFolderNode(node.id, FolderName.CONSTRAINTS, connId, catalog, schema, t, tableName)
+          : null;
+        updateNodeChildren(node.id, [columnsFolder, keysFolder, indexesFolder, ...(constraintsFolder ? [constraintsFolder] : [])]);
       }
     } catch (err) {
       console.error('Failed to load node data:', err);
@@ -466,6 +476,7 @@ export function useConnectionTree() {
             t,
             queryClient,
             force: true,
+            isDm: node.dbConnection?.dbType?.toLowerCase() === 'dm',
           });
           updateNodeChildren(node.id, folders);
         }
@@ -480,6 +491,7 @@ export function useConnectionTree() {
           t,
           queryClient,
           force: true,
+          isDm: node.dbConnection?.dbType?.toLowerCase() === 'dm',
         });
         updateNodeChildren(node.id, folders);
       } else if (node.type === ExplorerNodeType.FOLDER && node.folderName) {

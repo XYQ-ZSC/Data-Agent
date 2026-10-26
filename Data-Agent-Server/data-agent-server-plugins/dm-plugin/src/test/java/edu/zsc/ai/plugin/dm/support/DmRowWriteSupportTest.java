@@ -1,12 +1,15 @@
 package edu.zsc.ai.plugin.dm.support;
 
+import edu.zsc.ai.plugin.dm.value.DmLobPreviewValues;
 import edu.zsc.ai.plugin.model.command.sql.SqlCommandResult;
 import edu.zsc.ai.plugin.model.db.TableRowValue;
 import org.junit.jupiter.api.Test;
 
 import java.sql.Connection;
 import java.sql.PreparedStatement;
+import java.sql.ParameterMetaData;
 import java.sql.ResultSet;
+import java.sql.Types;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -26,6 +29,40 @@ import static org.mockito.Mockito.when;
 class DmRowWriteSupportTest {
 
     private final DmRowWriteSupport support = new DmRowWriteSupport();
+
+    @Test
+    void insertRow_decodesBinaryPreviewForBinaryColumn() throws Exception {
+        Connection connection = mock(Connection.class);
+        PreparedStatement statement = mock(PreparedStatement.class);
+        ParameterMetaData metadata = mock(ParameterMetaData.class);
+        when(connection.prepareStatement(anyString())).thenReturn(statement);
+        when(statement.getParameterMetaData()).thenReturn(metadata);
+        when(metadata.getParameterType(1)).thenReturn(Types.BLOB);
+        when(statement.executeUpdate()).thenReturn(1);
+
+        SqlCommandResult result = support.insertRow(connection, null, "HR", "files",
+                List.of(new TableRowValue("payload", "data:application/octet-stream;base64,AAECAw==")));
+
+        verify(statement).setBytes(1, new byte[]{0, 1, 2, 3});
+        assertTrue(result.isSuccess());
+    }
+
+    @Test
+    void insertRow_keepsHexLookingTextForCharacterColumn() throws Exception {
+        Connection connection = mock(Connection.class);
+        PreparedStatement statement = mock(PreparedStatement.class);
+        ParameterMetaData metadata = mock(ParameterMetaData.class);
+        when(connection.prepareStatement(anyString())).thenReturn(statement);
+        when(statement.getParameterMetaData()).thenReturn(metadata);
+        when(metadata.getParameterType(1)).thenReturn(Types.VARCHAR);
+        when(statement.executeUpdate()).thenReturn(1);
+
+        SqlCommandResult result = support.insertRow(connection, null, "HR", "notes",
+                List.of(new TableRowValue("text", "0xABCD")));
+
+        verify(statement).setObject(1, "0xABCD");
+        assertTrue(result.isSuccess());
+    }
 
     // ---------- insert ----------
 
@@ -287,6 +324,61 @@ class DmRowWriteSupportTest {
 
         verify(updateStatement).setObject(1, "");
         verify(updateStatement).setObject(2, 7L);
+    }
+
+    // ---------- LOB preview write-back guard (P0) ----------
+
+    @Test
+    void insertRow_rejectsTruncatedLobPreviewWithoutTouchingDatabase() throws Exception {
+        Connection connection = mock(Connection.class);
+
+        SqlCommandResult result = support.insertRow(connection, null, "HR", "docs",
+                List.of(new TableRowValue("id", 1), new TableRowValue("content", "[CLOB: 1.15MB]")));
+
+        assertFalse(result.isSuccess());
+        assertEquals(DmLobPreviewValues.PREVIEW_NOT_WRITABLE_CODE, result.getMessages().get(0).getCode());
+        assertTrue(result.getErrorMessage().contains("[CLOB: 1.15MB]"));
+        assertTrue(result.getErrorMessage().contains("content"));
+        // no statement is ever prepared, let alone executed
+        verify(connection, never()).prepareStatement(anyString());
+    }
+
+    @Test
+    void updateRow_rejectsTruncatedLobPreviewSetValueWithoutTouchingDatabase() throws Exception {
+        Connection connection = mock(Connection.class);
+
+        SqlCommandResult result = support.updateRow(connection, null, "HR", "files",
+                List.of(new TableRowValue("data", "[BLOB: 1.17MB]")),
+                List.of(new TableRowValue("id", 7L)), true);
+
+        assertFalse(result.isSuccess());
+        assertEquals(DmLobPreviewValues.PREVIEW_NOT_WRITABLE_CODE, result.getMessages().get(0).getCode());
+        assertTrue(result.getErrorMessage().contains("[BLOB: 1.17MB]"));
+        verify(connection, never()).prepareStatement(anyString());
+    }
+
+    @Test
+    void updateRow_allowsOrdinaryBracketedStrings() throws Exception {
+        Connection connection = mock(Connection.class);
+        PreparedStatement countStatement = mock(PreparedStatement.class);
+        PreparedStatement updateStatement = mock(PreparedStatement.class);
+        ResultSet resultSet = mock(ResultSet.class);
+        when(connection.prepareStatement("SELECT COUNT(*) AS total FROM \"HR\".\"users\" WHERE \"id\" = ?"))
+                .thenReturn(countStatement);
+        when(connection.prepareStatement("UPDATE \"HR\".\"users\" SET \"name\" = ? WHERE \"id\" = ?"))
+                .thenReturn(updateStatement);
+        when(countStatement.executeQuery()).thenReturn(resultSet);
+        when(resultSet.next()).thenReturn(true);
+        when(resultSet.getLong("total")).thenReturn(1L);
+        when(updateStatement.executeUpdate()).thenReturn(1);
+
+        // similar-looking but legitimate text values must pass through
+        SqlCommandResult result = support.updateRow(connection, null, "HR", "users",
+                List.of(new TableRowValue("name", "[BLOB: hello]")),
+                List.of(new TableRowValue("id", 7L)), false);
+
+        assertTrue(result.isSuccess());
+        verify(updateStatement).setObject(1, "[BLOB: hello]");
     }
 
     @Test
