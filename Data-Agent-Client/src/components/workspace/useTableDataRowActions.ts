@@ -626,12 +626,6 @@ export function useTableDataRowActions({
     await submitPendingOps(true);
   }, [submitPendingOps]);
 
-  // Discard all staged operations and restore the grid from the database.
-  const revertPendingOps = useCallback(async () => {
-    setPendingOps([]);
-    await loadData(currentPageRef.current);
-  }, [loadData]);
-
   return {
     // Insert form
     isAddingRow,
@@ -665,6 +659,5 @@ export function useTableDataRowActions({
     handleConfirmInsert,
     handleDeleteRow,
     submitPendingOps,
-    revertPendingOps,
   };
 }

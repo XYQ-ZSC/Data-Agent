@@ -15,6 +15,7 @@ interface ExplorerTreeProps {
   loadingNodeIds: ReadonlySet<string>;
   onHydrateFromCache: (node: NodeApi<ExplorerNode>) => ExplorerNodeHydrationState;
   onLoadData: (node: NodeApi<ExplorerNode>) => void;
+  onRefreshNode: (nodeId: string) => void;
   onDisconnect: (node: NodeApi<ExplorerNode>) => void;
   onEditConnection: (connId: number) => void;
   onDeleteConnection: (connId: number) => void;
@@ -93,6 +94,7 @@ export const ExplorerTree = forwardRef<ExplorerTreeHandle, ExplorerTreeProps>(fu
   loadingNodeIds,
   onHydrateFromCache,
   onLoadData,
+  onRefreshNode,
   onDisconnect,
   onEditConnection,
   onDeleteConnection,
@@ -188,6 +190,7 @@ export const ExplorerTree = forwardRef<ExplorerTreeHandle, ExplorerTreeProps>(fu
         isLoading={loadingNodeIds.has(node.id)}
         onHydrateFromCache={onHydrateFromCache}
         onLoadData={onLoadData}
+        onRefreshNode={onRefreshNode}
         onDisconnect={onDisconnect}
         onEditConnection={onEditConnection}
         onDeleteConnection={onDeleteConnection}

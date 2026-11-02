@@ -42,6 +42,7 @@ export function DatabaseExplorer() {
     hydrateNodeFromCache,
     loadNodeData,
     refreshNodeById,
+    refreshAll,
     handleDisconnect,
     isConnectionsLoading,
     refetchConnections,
@@ -321,7 +322,7 @@ export function DatabaseExplorer() {
         searchTerm={searchTerm}
         onSearchChange={setSearchTerm}
         isLoading={isConnectionsLoading}
-        onRefresh={refetchConnections}
+        onRefresh={() => { void refreshAll(); }}
         supportedDbTypes={supportedDbTypes}
         isDbTypesLoading={supportedDbTypesLoading}
         onRetryDbTypes={() => { void fetchSupportedDbTypes(); }}
@@ -344,6 +345,7 @@ export function DatabaseExplorer() {
           loadingNodeIds={loadingNodeIds}
           onHydrateFromCache={hydrateNodeFromCache}
           onLoadData={loadNodeData}
+          onRefreshNode={(nodeId) => { void refreshNodeById(nodeId); }}
           onDisconnect={handleDisconnect}
           onEditConnection={openEditModal}
           onDeleteConnection={(id) => setDeleteConfirmId(id)}

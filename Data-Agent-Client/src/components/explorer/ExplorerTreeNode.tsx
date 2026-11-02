@@ -29,6 +29,7 @@ export interface ExplorerTreeNodeProps {
   isLoading: boolean;
   onHydrateFromCache: (node: NodeApi<ExplorerNode>) => ExplorerNodeHydrationState;
   onLoadData: (node: NodeApi<ExplorerNode>) => void;
+  onRefreshNode: (nodeId: string) => void;
   onDisconnect: (node: NodeApi<ExplorerNode>) => void;
   onEditConnection: (connId: number) => void;
   onDeleteConnection: (connId: number) => void;
@@ -56,6 +57,7 @@ export function ExplorerTreeNode({
   isLoading,
   onHydrateFromCache,
   onLoadData,
+  onRefreshNode,
   onDisconnect,
   onEditConnection,
   onDeleteConnection,
@@ -207,7 +209,7 @@ export function ExplorerTreeNode({
         <RootNodeActions
           isLoading={isLoading}
           isConnected={isConnected}
-          onRefresh={() => onLoadData(node)}
+          onRefresh={() => onRefreshNode(node.id)}
           onDisconnect={() => onDisconnect(node)}
           onEdit={() => onEditConnection(Number(connId))}
           onDelete={() => onDeleteConnection(Number(connId))}
@@ -244,6 +246,7 @@ export function ExplorerTreeNode({
         <NodeContextMenuContent
           node={node.data}
           isConnected={isConnected}
+          onRefreshNode={onRefreshNode}
           onOpenQueryConsole={onOpenQueryConsole}
           onRunSqlScript={onRunSqlScript}
           onSqlGenerator={onSqlGenerator}

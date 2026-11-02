@@ -95,6 +95,20 @@ export const TRIGGER_ON_TABLE_FORMAT = (triggerName: string, tableName: string) 
 /** Display suffix for unique index. */
 export const INDEX_UNIQUE_SUFFIX = ' UNIQUE';
 
+/**
+ * Whether a node type can reload its own children from the server
+ * (connection, database, schema, or folder). Table/view leaves are excluded
+ * because their children are structural folders loaded on demand.
+ */
+export const isRefreshableNodeType = (
+  type: ExplorerNodeType,
+  folderName?: FolderName,
+): boolean =>
+  type === ExplorerNodeType.ROOT
+  || type === ExplorerNodeType.DB
+  || type === ExplorerNodeType.SCHEMA
+  || (type === ExplorerNodeType.FOLDER && !!folderName);
+
 /** Query key for connections. */
 export const QUERY_KEY_CONNECTIONS = ['connections'] as const;
 

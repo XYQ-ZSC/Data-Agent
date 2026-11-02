@@ -91,7 +91,7 @@ export function TableDataTab({ tabId, metadata }: TableDataTabProps) {
     handleConfirmInsert,
     handleDeleteRow,
     submitPendingOps,
-    revertPendingOps,
+    handleRefresh,
     formatCellValue,
     columns,
     startRow,
@@ -165,7 +165,7 @@ export function TableDataTab({ tabId, metadata }: TableDataTabProps) {
         databases={databases}
         loadingDatabases={loadingDatabases}
         onRun={handleRun}
-        onRefresh={() => void revertPendingOps()}
+        onRefresh={handleRefresh}
         onSubmit={() => void submitPendingOps(false)}
         onTransactionModeChange={setTxMode}
         onIsolationLevelChange={setIsolationLevel}
