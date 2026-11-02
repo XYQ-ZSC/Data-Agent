@@ -176,10 +176,6 @@ export function useTableDataQueryState({ tabId, metadata }: UseTableDataQuerySta
     void loadData(1);
   }, [loadData]);
 
-  const handleRefresh = useCallback(() => {
-    void loadData(currentPage);
-  }, [currentPage, loadData]);
-
   const handlePageSizeChange = useCallback((value: number) => {
     queryStateRef.current = { ...queryStateRef.current, pageSize: value };
     setPageSize(value);
@@ -292,7 +288,6 @@ export function useTableDataQueryState({ tabId, metadata }: UseTableDataQuerySta
     isTable,
     loadData,
     handleRun,
-    handleRefresh,
     handlePageSizeChange,
     handleWhereClauseChange,
     handleOrderByColumnChange,

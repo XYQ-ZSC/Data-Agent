@@ -1,4 +1,4 @@
-import { Download, FileCode2, FileText, Pencil, Play, Plus, RefreshCw, Table, Table2, Trash2, Upload, Waypoints } from 'lucide-react';
+import { Download, FileCode2, FileText, Pencil, Play, Plus, Table, Table2, Trash2, Upload, Waypoints } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import {
   ContextMenuContent,
@@ -8,7 +8,7 @@ import {
   ContextMenuSubContent,
   ContextMenuSubTrigger,
 } from '../ui/ContextMenu';
-import { ExplorerNodeType, isRefreshableNodeType } from '../../constants/explorer';
+import { ExplorerNodeType } from '../../constants/explorer';
 import type { ExplorerNode } from '../../types/explorer';
 import type { SqlStatementType } from '../../utils/sqlGenerator';
 import { I18N_KEYS } from '../../constants/i18nKeys';
@@ -16,7 +16,6 @@ import { I18N_KEYS } from '../../constants/i18nKeys';
 interface NodeContextMenuContentProps {
   node: ExplorerNode;
   isConnected: boolean;
-  onRefreshNode: (nodeId: string) => void;
   onOpenQueryConsole: (node: ExplorerNode) => void;
   onRunSqlScript: (node: ExplorerNode) => void;
   onSqlGenerator: (node: ExplorerNode) => void;
@@ -36,7 +35,6 @@ interface NodeContextMenuContentProps {
 export function NodeContextMenuContent({
   node,
   isConnected,
-  onRefreshNode,
   onOpenQueryConsole,
   onRunSqlScript,
   onSqlGenerator,
@@ -75,9 +73,6 @@ export function NodeContextMenuContent({
 
   const isSchema = node.type === ExplorerNodeType.SCHEMA;
 
-  const isRefreshableNode =
-    isConnected && isRefreshableNodeType(node.type, node.folderName);
-
   const isDeletableFolder =
     node.type === ExplorerNodeType.FOLDER &&
     node.folderName &&
@@ -112,17 +107,6 @@ export function NodeContextMenuContent({
 
   return (
     <ContextMenuContent>
-      {/* 0. 刷新 (Refresh) - reload this container's children from the server */}
-      {isRefreshableNode && (
-        <>
-          <ContextMenuItem onSelect={() => onRefreshNode(node.id)}>
-            <RefreshCw className="w-3.5 h-3.5 mr-2" />
-            {t(I18N_KEYS.COMMON.REFRESH)}
-          </ContextMenuItem>
-          <ContextMenuSeparator />
-        </>
-      )}
-
       {/* 1. 新建 (Create New) submenu - available for all connected nodes */}
       {isConnected && node.type !== ExplorerNodeType.EMPTY && (
         <>
