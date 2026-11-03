@@ -23,7 +23,7 @@ interface RenameActionsProps {
   renameState: RenameState;
   setTreeDataState: (cb: (prev: ExplorerNode[]) => ExplorerNode[]) => void;
   /** Re-derives the Tables folder so grouped nodes pick up the new name. */
-  rebuildTablesFolder?: (connectionId: string, catalog?: string, schema?: string) => void;
+  rebuildTablesFolder?: (connectionId: string, catalog?: string, schema?: string) => void | Promise<void>;
 }
 
 export function useRenameActions({
@@ -80,7 +80,7 @@ export function useRenameActions({
           oldName,
           trimmedName,
         );
-        rebuildTablesFolder?.(node.connectionId!, node.catalog, node.schema);
+        await rebuildTablesFolder?.(node.connectionId!, node.catalog, node.schema);
       }
       toast.success(t(I18N_KEYS.EXPLORER.RENAME_TABLE_SUCCESS));
     } catch (error) {

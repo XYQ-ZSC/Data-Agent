@@ -8,30 +8,29 @@ import {
   type TableGroupRule,
 } from '../store/tableGroupStore';
 
-/** Build a TABLE node with the given id prefix (folder id or group node id). */
+/** Table identity belongs to its scope, independent of its display group. */
 function makeTableNode(
-  prefix: string,
+  folderId: string,
   connectionId: string,
   catalog: string | undefined,
   schema: string | undefined,
   name: string,
   groupId?: string,
-  groupKind?: 'manual' | 'rule'
+  groupKind?: 'manual' | 'rule',
+  previous?: ExplorerNode
 ): ExplorerNode {
-  const node: ExplorerNode = {
-    id: `${prefix}${ExplorerIdPrefix.TABLE}${name}`,
+  return {
+    ...previous,
+    id: `${folderId}${ExplorerIdPrefix.TABLE}${name}`,
     name,
     type: ExplorerNodeType.TABLE,
     connectionId,
     catalog,
     schema,
-    children: [],
+    groupId,
+    groupKind,
+    children: previous?.children ?? [],
   };
-  if (groupId && groupKind) {
-    node.groupId = groupId;
-    node.groupKind = groupKind;
-  }
-  return node;
 }
 
 function matchString(
@@ -83,10 +82,26 @@ export function buildTablesFolderChildren(opts: {
   schema?: string;
   folderId: string;
   tableNames: string[];
+  /** Existing rendered children to retain metadata when only grouping changes. */
+  previousChildren?: ExplorerNode[];
 }): ExplorerNode[] {
   const { connectionId, catalog, schema, folderId, tableNames } = opts;
   const scope = tableGroupScopeKey(connectionId, catalog, schema);
   const groups = useTableGroupStore.getState().groupsByScope[scope] ?? [];
+  const previousTables = new Map<string, ExplorerNode>();
+  const collectTables = (nodes: ExplorerNode[]) => {
+    for (const node of nodes) {
+      if (node.type === ExplorerNodeType.GROUP) {
+        collectTables(node.children ?? []);
+      } else if (
+        node.type === ExplorerNodeType.TABLE && node.connectionId === connectionId &&
+        (node.catalog ?? '') === (catalog ?? '') && (node.schema ?? '') === (schema ?? '')
+      ) {
+        previousTables.set(node.name, node);
+      }
+    }
+  };
+  collectTables(opts.previousChildren ?? []);
 
   // Resolve single-parent membership. Explicit (manual) assignments win over
   // rules, because they reflect direct user intent; within the same kind the
@@ -106,7 +121,9 @@ export function buildTablesFolderChildren(opts: {
     const kind: 'manual' | 'rule' = isManualGroup(group) ? 'manual' : 'rule';
     const children = tableNames
       .filter((name) => tableToGroup.get(name)?.id === group.id)
-      .map((name) => makeTableNode(groupId, connectionId, catalog, schema, name, group.id, kind));
+      .map((name) => makeTableNode(
+        folderId, connectionId, catalog, schema, name, group.id, kind, previousTables.get(name),
+      ));
     return {
       id: groupId,
       name: group.name,
@@ -122,7 +139,9 @@ export function buildTablesFolderChildren(opts: {
 
   const ungrouped = tableNames
     .filter((name) => !tableToGroup.has(name))
-    .map((name) => makeTableNode(folderId, connectionId, catalog, schema, name));
+    .map((name) => makeTableNode(
+      folderId, connectionId, catalog, schema, name, undefined, undefined, previousTables.get(name),
+    ));
 
   const all: ExplorerNode[] = [...groupNodes, ...ungrouped];
   all.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));

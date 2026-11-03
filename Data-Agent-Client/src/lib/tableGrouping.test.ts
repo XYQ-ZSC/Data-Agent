@@ -136,7 +136,7 @@ describe('buildTablesFolderChildren', () => {
     const nodes = buildTablesFolderChildren(folderOpts(['t_a', 'plain']));
     const group = nodes.find((n) => n.type === ExplorerNodeType.GROUP)!;
     const nested = group.children![0];
-    expect(nested.id).toBe('f-group-g-table-t_a');
+    expect(nested.id).toBe('f-table-t_a');
     expect(nested.connectionId).toBe('1');
     expect(nested.catalog).toBe('db');
     expect(nested.schema).toBe('public');

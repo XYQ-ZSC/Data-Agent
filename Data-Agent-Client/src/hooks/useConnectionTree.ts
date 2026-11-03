@@ -20,6 +20,7 @@ import {
   clearExplorerMetadataForConnection,
   fetchExplorerDatabases,
   fetchExplorerSchemas,
+  fetchExplorerTables,
   getCachedExplorerDatabases,
   getCachedExplorerFunctions,
   getCachedExplorerProcedures,
@@ -128,12 +129,17 @@ export function useConnectionTree() {
     },
   });
 
-  const updateNodeChildren = (nodeId: string, children: ExplorerNode[], connectionId?: string) => {
+  const updateNodeChildren = (
+    nodeId: string,
+    children: ExplorerNode[] | ((previous: ExplorerNode[]) => ExplorerNode[]),
+    connectionId?: string,
+  ) => {
     setTreeDataState((prev) => {
       const update = (list: ExplorerNode[]): ExplorerNode[] =>
         list.map((n) => {
           if (n.id === nodeId) {
-            return { ...n, children, ...(connectionId ? { connectionId } : {}) };
+            const nextChildren = typeof children === 'function' ? children(n.children ?? []) : children;
+            return { ...n, children: nextChildren, ...(connectionId ? { connectionId } : {}) };
           }
           if (n.children) return { ...n, children: update(n.children) };
           return n;
@@ -544,24 +550,40 @@ export function useConnectionTree() {
   };
 
   // Re-derive the "Tables" folder children after a group definition or membership
-  // changes. Uses the already-cached table list, so no network round-trip.
-  const rebuildTablesFolder = (connectionId: string, catalog?: string, schema?: string) => {
+  // changes, retaining loaded metadata and preferring the cached table list.
+  const rebuildTablesFolder = async (connectionId: string, catalog?: string, schema?: string) => {
     const connId = String(connectionId);
     const folder = findTablesFolderNode(treeDataState, connId, catalog ?? '', schema ?? '');
     if (!folder) return;
+    const rebuild = (tables: string[]) => {
+      // Read children inside the state updater so queued renames or metadata
+      // loads are retained even before the hook renders again.
+      updateNodeChildren(folder.id, (previousChildren) => toChildrenOrEmpty(buildTablesFolderChildren({
+        connectionId: connId,
+        catalog,
+        schema,
+        folderId: folder.id,
+        tableNames: tables,
+        previousChildren,
+      }), folder.id, t));
+    };
     const tables = getCachedExplorerTables(queryClient, connId, catalog, schema);
-    if (!tables) {
-      void refreshNodeById(folder.id);
+    if (tables) {
+      rebuild(tables);
       return;
     }
-    const children = buildTablesFolderChildren({
-      connectionId: connId,
-      catalog,
-      schema,
-      folderId: folder.id,
-      tableNames: tables,
-    });
-    updateNodeChildren(folder.id, toChildrenOrEmpty(children, folder.id, t));
+
+    // Cache eviction must not turn a group change into a destructive tree
+    // refresh. Fetch only the table list and reconcile it with the current tree.
+    setNodeLoading(folder.id, true);
+    try {
+      rebuild(await fetchExplorerTables(queryClient, connId, catalog, schema));
+    } catch (err) {
+      console.error('Failed to rebuild tables folder:', err);
+      toast.error(t('explorer.load_failed'));
+    } finally {
+      setNodeLoading(folder.id, false);
+    }
   };
 
   const handleDisconnect = (node: NodeApi<ExplorerNode>) => {
