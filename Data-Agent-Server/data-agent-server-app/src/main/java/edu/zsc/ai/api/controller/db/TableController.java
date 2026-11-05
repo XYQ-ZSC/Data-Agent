@@ -16,6 +16,7 @@ import edu.zsc.ai.domain.model.dto.response.db.ExecuteSqlResponse;
 import edu.zsc.ai.domain.model.dto.response.db.ImportTableDataResponse;
 import edu.zsc.ai.domain.model.dto.response.db.TableDataResponse;
 import edu.zsc.ai.domain.service.db.ErDiagramService;
+import edu.zsc.ai.domain.service.db.SqlTemplateService;
 import edu.zsc.ai.domain.service.db.TableService;
 import edu.zsc.ai.domain.service.db.transfer.TableDataExporter;
 import edu.zsc.ai.plugin.model.db.TableRowValue;
@@ -51,6 +52,7 @@ public class TableController {
 
     private final TableService tableService;
     private final ErDiagramService erDiagramService;
+    private final SqlTemplateService sqlTemplateService;
 
     @GetMapping("/er-diagram")
     public ApiResponse<ErDiagramResponse> erDiagram(
@@ -83,6 +85,19 @@ public class TableController {
         DbContext db = new DbContext(connectionId, catalog, schema);
         String ddl = tableService.getTableDdl(db, tableName);
         return ApiResponse.success(ddl);
+    }
+
+    @GetMapping("/sql-template")
+    public ApiResponse<String> generateSqlTemplate(
+            @RequestParam @NotNull(message = "connectionId is required") Long connectionId,
+            @RequestParam @NotNull(message = "tableName is required") String tableName,
+            @RequestParam @NotNull(message = "statementType is required") String statementType,
+            @RequestParam(required = false) String catalog,
+            @RequestParam(required = false) String schema) {
+        log.info("Generating SQL template: connectionId={}, tableName={}, statementType={}, catalog={}, schema={}",
+                connectionId, tableName, statementType, catalog, schema);
+        DbContext db = new DbContext(connectionId, catalog, schema);
+        return ApiResponse.success(sqlTemplateService.generate(db, tableName, statementType));
     }
 
     @DeleteMapping
