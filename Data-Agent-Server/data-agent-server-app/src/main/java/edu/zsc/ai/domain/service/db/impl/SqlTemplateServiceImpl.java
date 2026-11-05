@@ -39,7 +39,7 @@ public class SqlTemplateServiceImpl implements SqlTemplateService {
 
     private SqlTemplateContext buildContext(DbContext db, String tableName, String quote,
                                             List<ColumnMetadata> columns) {
-        String qualifiedTable = Stream.of(db.schema(), db.catalog(), tableName)
+        String qualifiedTable = Stream.of(db.catalog(), db.schema(), tableName)
                 .filter(part -> part != null && !part.isBlank())
                 .map(part -> ImportPrepareSupport.quoteIdentifier(quote, part))
                 .collect(Collectors.joining("."));

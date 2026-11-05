@@ -15,7 +15,6 @@
 .data-agent/
 backend-run.log
 backend-run.err.log
-frontend-run.log
 
 # Local configuration
 **/application-local.yml
