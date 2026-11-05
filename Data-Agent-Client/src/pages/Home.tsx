@@ -202,15 +202,17 @@ export default function Home() {
                 </div>
             )}
 
-            {/* Opened ER diagrams stay mounted so switching back skips reload and layout. */}
+            {/* Opened ER diagrams stay mounted so switching back skips reload and layout.
+                Retained diagrams use `invisible` (not `display: none`) so the canvas keeps its
+                clientWidth/clientHeight for the viewport math, while still dropping out of the
+                keyboard tab order (which `opacity-0` would not) and the accessibility tree. */}
             <div className="relative min-h-0 flex-1">
                 {erTabs.map((tab) => {
                     const retained = activeTabId !== tab.id;
                     return (
                         <div
                             key={tab.id}
-                            className={`absolute inset-0 isolate overflow-hidden bg-transparent ${retained ? 'z-0 opacity-0 pointer-events-none' : 'z-10'}`}
-                            aria-hidden={retained}
+                            className={`absolute inset-0 isolate overflow-hidden bg-transparent ${retained ? 'z-0 invisible pointer-events-none' : 'z-10'}`}
                         >
                             <ErDiagramTab metadata={tab.metadata as ErDiagramTabMetadata} />
                         </div>
