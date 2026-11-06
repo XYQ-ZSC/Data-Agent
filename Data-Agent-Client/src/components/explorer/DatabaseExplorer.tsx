@@ -411,7 +411,7 @@ export function DatabaseExplorer() {
         connectionId: number;
         catalog?: string | null;
         schema?: string | null;
-        objectType: string;
+        objectType: string | null;
       }>).detail;
       const folderByType: Record<string, FolderName> = {
         TABLE: FolderName.TABLES,
@@ -422,7 +422,7 @@ export function DatabaseExplorer() {
         SEQUENCE: FolderName.SEQUENCES,
         CONSTRAINT: FolderName.CONSTRAINTS,
       };
-      const folderName = folderByType[detail.objectType];
+      const folderName = detail.objectType ? folderByType[detail.objectType] : undefined;
       const nodes: ExplorerNode[] = [];
       const collect = (items: ExplorerNode[]) => {
         for (const item of items) {
@@ -440,7 +440,14 @@ export function DatabaseExplorer() {
       const schema = nodes.find(node =>
         node.type === ExplorerNodeType.SCHEMA && matchingScope(node)
         && node.name === detail.schema);
-      const target = folder ?? schema;
+      // DB nodes store the database name in `name` (catalog is undefined for
+      // them), so match by name as a last-resort scope — needed for MySQL,
+      // which has no schema nodes.
+      const db = nodes.find(node =>
+        node.type === ExplorerNodeType.DB
+        && node.connectionId === String(detail.connectionId)
+        && node.name === detail.catalog);
+      const target = folder ?? schema ?? db;
       if (target) void refreshNodeById(target.id);
     };
     window.addEventListener(EXPLORER_SQL_OBJECT_CHANGED, onSqlObjectChanged);
