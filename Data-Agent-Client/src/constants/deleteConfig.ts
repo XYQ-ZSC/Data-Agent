@@ -32,6 +32,16 @@ export const DELETE_DIALOG_CONFIG: Partial<Record<ExplorerNodeType, DeleteDialog
     messageKey: 'explorer.delete_trigger_confirm',
     errorKey: 'explorer.delete_trigger_failed',
   },
+  [ExplorerNodeType.SEQUENCE]: {
+    titleKey: 'explorer.delete_sequence',
+    messageKey: 'explorer.delete_sequence_confirm',
+    errorKey: 'explorer.delete_sequence_failed',
+  },
+  [ExplorerNodeType.CONSTRAINT]: {
+    titleKey: 'explorer.delete_constraint',
+    messageKey: 'explorer.delete_constraint_confirm',
+    errorKey: 'explorer.delete_constraint_failed',
+  },
   [ExplorerNodeType.DB]: {
     titleKey: 'explorer.delete_database',
     messageKey: 'explorer.delete_database_confirm',

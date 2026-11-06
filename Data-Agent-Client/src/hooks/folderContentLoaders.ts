@@ -7,10 +7,13 @@ import { triggerService } from '../services/trigger.service';
 import { columnService } from '../services/column.service';
 import { indexService } from '../services/index.service';
 import { primaryKeyService } from '../services/primaryKey.service';
+import { sequenceService } from '../services/sequence.service';
+import { constraintService } from '../services/constraint.service';
 import { ExplorerNodeType, ExplorerIdPrefix, TRIGGER_ON_TABLE_FORMAT, INDEX_UNIQUE_SUFFIX } from '../constants/explorer';
 import type { ExplorerNode } from '../types/explorer';
 import type { ParameterInfo } from '../services/function.service';
 import { fetchExplorerTables, fetchExplorerViews } from '../lib/explorerMetadataCache';
+import { buildTablesFolderChildren } from '../lib/tableGrouping';
 
 export function formatRoutineSignature(
   parameters: ParameterInfo[] | undefined | null,
@@ -40,15 +43,7 @@ async function loadTables(ctx: FolderLoadContext): Promise<ExplorerNode[]> {
   const tables = ctx.queryClient
     ? await fetchExplorerTables(ctx.queryClient, connId, catalog, schema, { force: ctx.force })
     : await tableService.listTables(connId, catalog, schema);
-  return tables.map((name) => ({
-    id: `${fid}${ExplorerIdPrefix.TABLE}${name}`,
-    name,
-    type: ExplorerNodeType.TABLE,
-    connectionId: connId,
-    catalog,
-    schema,
-    children: [],
-  }));
+  return buildTablesFolderChildren({ connectionId: connId, catalog, schema, folderId: fid, tableNames: tables });
 }
 
 async function loadViews(ctx: FolderLoadContext): Promise<ExplorerNode[]> {
@@ -166,6 +161,33 @@ async function loadIndexes(ctx: FolderLoadContext): Promise<ExplorerNode[]> {
   });
 }
 
+async function loadSequences(ctx: FolderLoadContext): Promise<ExplorerNode[]> {
+  const sequences = await sequenceService.listSequences(ctx.connId, ctx.catalog, ctx.schema);
+  return sequences.map((sequence) => ({
+    id: `${ctx.folderId}${ExplorerIdPrefix.SEQUENCE}${sequence.name}`,
+    name: sequence.name,
+    type: ExplorerNodeType.SEQUENCE,
+    connectionId: ctx.connId,
+    catalog: ctx.catalog,
+    schema: ctx.schema,
+  }));
+}
+
+async function loadConstraints(ctx: FolderLoadContext): Promise<ExplorerNode[]> {
+  if (!ctx.tableName) return [];
+  const constraints = await constraintService.listConstraints(ctx.connId, ctx.tableName, ctx.catalog, ctx.schema);
+  return constraints.map((constraint) => ({
+    id: `${ctx.folderId}${ExplorerIdPrefix.CONSTRAINT}${constraint.name}`,
+    name: constraint.name,
+    type: ExplorerNodeType.CONSTRAINT,
+    connectionId: ctx.connId,
+    catalog: ctx.catalog,
+    schema: ctx.schema,
+    tableName: ctx.tableName,
+    signature: `${constraint.type} (${constraint.columns.join(', ')})`,
+  }));
+}
+
 const FOLDER_LOADERS: Record<
   string,
   (ctx: FolderLoadContext) => Promise<ExplorerNode[]>
@@ -177,6 +199,8 @@ const FOLDER_LOADERS: Record<
   columns: loadColumns,
   keys: loadKeys,
   indexes: loadIndexes,
+  sequences: loadSequences,
+  constraints: loadConstraints,
 };
 
 export function loadFolderContentsByType(

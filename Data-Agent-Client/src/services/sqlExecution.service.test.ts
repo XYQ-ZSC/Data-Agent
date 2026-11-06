@@ -70,4 +70,46 @@ describe('sqlExecutionService', () => {
       sql: 'select * from chat2db_user;',
     });
   });
+
+  it('sends script mode and resource limits to the batch endpoint', async () => {
+    postMock.mockResolvedValue({ data: [{ success: false, statementState: 'NOT_EXECUTED' }] });
+
+    const result = await sqlExecutionService.executeScript({
+      connectionId: 9,
+      schemaName: 'TEST',
+      sql: 'CREATE TABLE T (ID INT);',
+      mode: 'STEPWISE',
+      timeoutMs: 5000,
+      maxRows: 100,
+      executionId: 'execution-1',
+    });
+
+    expect(postMock).toHaveBeenCalledWith(SqlPaths.EXECUTE_SCRIPT, {
+      connectionId: 9,
+      catalog: undefined,
+      schema: 'TEST',
+      sql: 'CREATE TABLE T (ID INT);',
+      mode: 'STEPWISE',
+      timeoutMs: 5000,
+      maxRows: 100,
+      executionId: 'execution-1',
+    }, { timeout: 0 });
+    expect(result[0].statementState).toBe('NOT_EXECUTED');
+  });
+
+  it('scopes cancellation to the same connection and schema', async () => {
+    postMock.mockResolvedValue({ data: 'CANCEL_REQUESTED' });
+    const outcome = await sqlExecutionService.cancelExecution({
+      connectionId: 9,
+      schemaName: 'TEST',
+      executionId: 'execution-1',
+    });
+    expect(postMock).toHaveBeenCalledWith(SqlPaths.CANCEL, {
+      connectionId: 9,
+      catalog: undefined,
+      schema: 'TEST',
+      executionId: 'execution-1',
+    });
+    expect(outcome).toBe('CANCEL_REQUESTED');
+  });
 });

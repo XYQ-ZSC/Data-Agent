@@ -1,18 +1,22 @@
 package edu.zsc.ai.plugin.dm.support;
 
+import edu.zsc.ai.plugin.dm.value.DmLobPreviewValues;
 import edu.zsc.ai.plugin.model.command.sql.SqlCommandResult;
 import edu.zsc.ai.plugin.model.command.sql.SqlMessageInfo;
 import edu.zsc.ai.plugin.model.command.sql.SqlMessageLevel;
 import edu.zsc.ai.plugin.model.db.TableRowValue;
+import edu.zsc.ai.plugin.model.transaction.StatementExecutionState;
 import org.apache.commons.lang3.StringUtils;
 
 import java.sql.Connection;
 import java.sql.PreparedStatement;
+import java.sql.ParameterMetaData;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Types;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Base64;
 
 /**
  * Row-level INSERT/UPDATE/DELETE support for DM (DaMeng).
@@ -24,6 +28,12 @@ import java.util.List;
  *       only used as a fallback).</li>
  *   <li>Empty strings and SQL NULL remain distinct JDBC inputs. The server's
  *       compatibility mode decides how an empty string is stored.</li>
+ *   <li>Truncated LOB preview placeholders ({@code [BLOB: xMB]} /
+ *       {@code [CLOB: xMB]}, produced by the DM value processors for large
+ *       objects) are refused as INSERT/UPDATE inputs: they are size metadata,
+ *       not content, and writing them back would silently corrupt the LOB
+ *       (live-verified). Rejected with code
+ *       {@link DmLobPreviewValues#PREVIEW_NOT_WRITABLE_CODE}.</li>
  * </ul>
  *
  * @author hhz
@@ -56,6 +66,11 @@ public final class DmRowWriteSupport {
         }
 
         String sql = sqlTemplate.buildInsertRowSql(fullTableName, quotedColumns);
+
+        TableRowValue preview = firstTruncatedLobPreview(values);
+        if (preview != null) {
+            return buildPreviewRejectedResult(sql, preview);
+        }
 
         return executePreparedUpdate(connection, sql, params);
     }
@@ -106,6 +121,11 @@ public final class DmRowWriteSupport {
         SetClause setClause = buildSetClause(setValues);
         MatchClause matchClause = buildMatchClause(matchValues);
         String sql = sqlTemplate.buildUpdateRowSql(fullTableName, setClause.setSql(), matchClause.whereSql());
+
+        TableRowValue preview = firstTruncatedLobPreview(setValues);
+        if (preview != null) {
+            return buildPreviewRejectedResult(sql, preview);
+        }
 
         long matchedRows = countRowsByMatch(connection, fullTableName, matchClause);
         if (matchedRows == 0) {
@@ -217,13 +237,48 @@ public final class DmRowWriteSupport {
     }
 
     private void bindPreparedParameters(PreparedStatement statement, List<Object> params) throws SQLException {
+        ParameterMetaData parameterMetaData = null;
         for (int i = 0; i < params.size(); i++) {
             Object value = params.get(i);
             if (value == null) {
                 statement.setNull(i + 1, Types.NULL);
+            } else if (value instanceof String text && isEncodedBinary(text)) {
+                if (parameterMetaData == null) {
+                    parameterMetaData = statement.getParameterMetaData();
+                    if (parameterMetaData == null) {
+                        throw new SQLException("Cannot verify target type for encoded binary value");
+                    }
+                }
+                int jdbcType = parameterMetaData.getParameterType(i + 1);
+                boolean binaryType = jdbcType == Types.BINARY || jdbcType == Types.VARBINARY
+                        || jdbcType == Types.LONGVARBINARY || jdbcType == Types.BLOB;
+                if (!binaryType && (jdbcType == Types.OTHER || jdbcType == Types.NULL)) {
+                    String typeName = parameterMetaData.getParameterTypeName(i + 1);
+                    binaryType = typeName != null && (typeName.equalsIgnoreCase("BLOB")
+                            || typeName.equalsIgnoreCase("BINARY") || typeName.equalsIgnoreCase("VARBINARY"));
+                }
+                if (binaryType) {
+                    statement.setBytes(i + 1, decodeBinary(text));
+                } else if (jdbcType == Types.OTHER || jdbcType == Types.NULL) {
+                    throw new SQLException("Cannot verify target type for encoded binary value");
+                } else {
+                    statement.setObject(i + 1, text);
+                }
             } else {
                 statement.setObject(i + 1, value);
             }
+        }
+    }
+
+    private boolean isEncodedBinary(String value) {
+        return value.startsWith("data:application/octet-stream;base64,");
+    }
+
+    private byte[] decodeBinary(String value) throws SQLException {
+        try {
+            return Base64.getDecoder().decode(value.substring("data:application/octet-stream;base64,".length()));
+        } catch (IllegalArgumentException e) {
+            throw new SQLException("Invalid Base64 binary value", e);
         }
     }
 
@@ -245,6 +300,28 @@ public final class DmRowWriteSupport {
             return charSequence.toString();
         }
         return String.valueOf(value);
+    }
+
+    /**
+     * Find the first value that is a truncated LOB preview placeholder, or null.
+     * Such values are size metadata, not content; see {@link DmLobPreviewValues}.
+     */
+    private TableRowValue firstTruncatedLobPreview(List<TableRowValue> values) {
+        for (TableRowValue entry : values) {
+            if (entry != null && DmLobPreviewValues.isTruncatedLobPreview(entry.value())) {
+                return entry;
+            }
+        }
+        return null;
+    }
+
+    private SqlCommandResult buildPreviewRejectedResult(String sql, TableRowValue entry) {
+        SqlCommandResult result = buildFailedUpdateResult(sql,
+                DmLobPreviewValues.rejectionMessage(entry.columnName().trim(), entry.value()),
+                DmLobPreviewValues.PREVIEW_NOT_WRITABLE_CODE,
+                0L);
+        result.setStatementState(StatementExecutionState.NOT_EXECUTED);
+        return result;
     }
 
     private SqlCommandResult buildFailedUpdateResult(String sql, String message) {
