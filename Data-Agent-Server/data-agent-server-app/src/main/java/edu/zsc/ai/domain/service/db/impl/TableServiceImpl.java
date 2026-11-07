@@ -94,15 +94,22 @@ public class TableServiceImpl implements TableService {
         ActiveConnectionRegistry.ActiveConnection active = ActiveConnectionRegistry.getOwnedConnection(db);
         TableManager provider = DefaultPluginManager.getInstance().getTableManagerByPluginId(active.pluginId());
         try (ActiveConnectionRegistry.BorrowedConnection borrowed = active.borrowConnection()) {
-            try {
-                return provider.getTableComments(borrowed.connection(), db.catalog(), db.schema());
-            } catch (RuntimeException e) {
-                // Comments are supplementary metadata: a failed lookup must not
-                // hide the table list in the explorer.
-                log.warn("Failed to load table comments: connectionId={}, catalog={}, schema={}",
-                        db.connectionId(), db.catalog(), db.schema(), e);
-                return Map.of();
-            }
+            return loadCommentsSafely(provider, borrowed.connection(), db);
+        }
+    }
+
+    /**
+     * Comments are supplementary metadata: a failed lookup must not hide the
+     * table list in the explorer, so degrade to an empty map. Scoped to the
+     * provider call only — connection-acquisition failures still propagate.
+     */
+    private Map<String, String> loadCommentsSafely(TableManager provider, Connection connection, DbContext db) {
+        try {
+            return provider.getTableComments(connection, db.catalog(), db.schema());
+        } catch (RuntimeException e) {
+            log.warn("Failed to load table comments: connectionId={}, catalog={}, schema={}",
+                    db.connectionId(), db.catalog(), db.schema(), e);
+            return Map.of();
         }
     }
 
