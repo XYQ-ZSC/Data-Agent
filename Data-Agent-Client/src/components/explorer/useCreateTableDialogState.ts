@@ -8,6 +8,12 @@ import { useToast } from '../../hooks/useToast';
 import type { ExplorerNode } from '../../types/explorer';
 import type { DbConnection } from '../../types/connection';
 import { resolveErrorMessage } from '../../lib/errorMessage';
+import {
+  buildDmCommentOnTableStatement,
+  buildMysqlTableCommentClause,
+  isDmDbType,
+  quoteCreateTableIdentifier,
+} from '../../lib/sqlComment';
 
 const MIN_WIDTH = 520;
 const MIN_HEIGHT = 400;
@@ -67,12 +73,6 @@ interface UseCreateTableDialogStateArgs {
   node: ExplorerNode | null;
   connections?: DbConnection[];
   onSuccess?: (node: ExplorerNode) => void;
-}
-
-function quoteIdentifier(name: string, dbType?: string): string {
-  if (!name.trim()) return name;
-  const isMysql = dbType?.toLowerCase().includes('mysql');
-  return isMysql ? `\`${name}\`` : `"${name.replace(/"/g, '""')}"`;
 }
 
 function validateTableName(name: string): boolean {
@@ -295,8 +295,8 @@ export function useCreateTableDialogState({
     });
   };
 
-  const previewSql = useMemo(() => {
-    const q = (s: string) => quoteIdentifier(s, dbType);
+  const baseSql = useMemo(() => {
+    const q = (s: string) => quoteCreateTableIdentifier(s, dbType);
     const validCols = columns.filter((c) => c.name.trim());
     const tblName = tableName.trim() || 'table_name';
     if (validCols.length === 0) return `create table ${q(displayTableName)}\n(\n);`;
@@ -335,6 +335,33 @@ export function useCreateTableDialogState({
     [...checkedSections].sort().join(','),
   ]);
 
+  const mysqlCommentClause = useMemo(
+    () => buildMysqlTableCommentClause(tableComment, dbType),
+    [tableComment, dbType],
+  );
+
+  const dmCommentStatement = useMemo(() => {
+    if (!isDmDbType(dbType) || !tableComment.trim()) return '';
+    return buildDmCommentOnTableStatement(
+      schema,
+      tableName.trim() || 'table_name',
+      tableComment,
+      dbType,
+    );
+  }, [dbType, schema, tableComment, tableName]);
+
+  /** SQL actually executed: the CREATE TABLE statement plus MySQL's inline comment clause. */
+  const createTableSql = useMemo(
+    () => `${baseSql.replace(/^create table/i, 'CREATE TABLE')}${mysqlCommentClause}`,
+    [baseSql, mysqlCommentClause],
+  );
+
+  /** What the preview shows: the executed statement, plus DM's separate comment statement. */
+  const previewSql = useMemo(
+    () => (dmCommentStatement ? `${createTableSql};\n${dmCommentStatement};` : createTableSql),
+    [createTableSql, dmCommentStatement],
+  );
+
   const handleSubmit = async () => {
     if (!connectionId || !tableName.trim()) return;
     if (!validateTableName(tableName)) {
@@ -352,15 +379,13 @@ export function useCreateTableDialogState({
       return;
     }
 
-    const createSql = previewSql.replace(/^create table/i, 'CREATE TABLE');
-
     setIsPending(true);
     try {
       const response = await tableService.createTable({
         connectionId: Number(connectionId),
         databaseName: catalog || undefined,
         schemaName: schema ?? undefined,
-        sql: createSql,
+        sql: createTableSql,
       });
 
       if (response.type === 'ERROR' || !response.success) {
@@ -370,6 +395,27 @@ export function useCreateTableDialogState({
       }
 
       toast.success(t(I18N_KEYS.EXPLORER.CREATE_TABLE_SUCCESS));
+
+      // Dialects without an inline table comment (DM) need a second statement.
+      // The table already exists, so a failure here only warns and still refreshes.
+      if (dmCommentStatement) {
+        try {
+          await tableService.updateTableComment(
+            connectionId,
+            tableName.trim(),
+            tableComment.trim(),
+            catalog || undefined,
+            schema,
+          );
+        } catch (commentError) {
+          console.error('Failed to save table comment:', commentError);
+          toast.error(resolveErrorMessage(
+            commentError,
+            t(I18N_KEYS.EXPLORER.CREATE_TABLE_COMMENT_FAILED),
+          ));
+        }
+      }
+
       handleClose(false);
       if (node) {
         onSuccess?.(node);

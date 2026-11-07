@@ -9,6 +9,7 @@ import edu.zsc.ai.domain.model.dto.request.db.ErDiagramRequest;
 import edu.zsc.ai.domain.model.dto.request.db.InsertTableRowRequest;
 import edu.zsc.ai.domain.model.dto.request.db.RenameTableRequest;
 import edu.zsc.ai.domain.model.dto.request.db.TableRowValueRequest;
+import edu.zsc.ai.domain.model.dto.request.db.UpdateTableCommentRequest;
 import edu.zsc.ai.domain.model.dto.request.db.UpdateTableRowRequest;
 import edu.zsc.ai.domain.model.dto.response.base.ApiResponse;
 import edu.zsc.ai.domain.model.dto.response.db.BatchTableRowsResponse;
@@ -43,6 +44,7 @@ import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Map;
 
 @Slf4j
 @Validated
@@ -82,6 +84,25 @@ public class TableController {
         DbContext db = new DbContext(connectionId, catalog, schema);
         List<String> tables = tableService.getTables(db);
         return ApiResponse.success(tables);
+    }
+
+    @GetMapping("/comments")
+    public ApiResponse<Map<String, String>> listTableComments(
+            @RequestParam @NotNull(message = "connectionId is required") Long connectionId,
+            @RequestParam(required = false) String catalog,
+            @RequestParam(required = false) String schema) {
+        log.info("Listing table comments: connectionId={}, catalog={}, schema={}", connectionId, catalog, schema);
+        DbContext db = new DbContext(connectionId, catalog, schema);
+        return ApiResponse.success(tableService.getTableComments(db));
+    }
+
+    @PutMapping("/comment")
+    public ApiResponse<Void> updateTableComment(@Valid @RequestBody UpdateTableCommentRequest request) {
+        log.info("Updating table comment: connectionId={}, tableName={}, catalog={}, schema={}",
+                request.getConnectionId(), request.getTableName(), request.getCatalog(), request.getSchema());
+        DbContext db = new DbContext(request.getConnectionId(), request.getCatalog(), request.getSchema());
+        tableService.updateTableComment(db, request.getTableName(), request.getComment());
+        return ApiResponse.success(null);
     }
 
     @GetMapping("/ddl")

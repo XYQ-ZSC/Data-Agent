@@ -3,6 +3,8 @@ export const ApiPaths = {
   COLUMNS: '/columns',
   DATABASES: '/databases',
   TABLES: '/tables',
+  TABLES_COMMENTS: '/tables/comments',
+  TABLES_COMMENT: '/tables/comment',
   TABLES_ER_DIAGRAM: '/tables/er-diagram',
   TABLES_DDL: '/tables/ddl',
   TABLES_SQL_TEMPLATE: '/tables/sql-template',

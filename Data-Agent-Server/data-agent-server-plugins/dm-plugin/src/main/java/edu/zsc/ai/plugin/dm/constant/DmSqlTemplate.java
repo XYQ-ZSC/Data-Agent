@@ -30,6 +30,10 @@ public final class DmSqlTemplate {
     public static final String SQL_TABLE_COMMENT =
             "SELECT COMMENTS FROM ALL_TAB_COMMENTS"
                     + " WHERE OWNER = ? AND TABLE_NAME = ? AND TABLE_TYPE = 'TABLE'";
+    /** Parameter: 1 = exact owner schema. Base tables only; views are excluded. */
+    public static final String SQL_TABLE_COMMENTS =
+            "SELECT TABLE_NAME, COMMENTS FROM ALL_TAB_COMMENTS"
+                    + " WHERE OWNER = ? AND TABLE_TYPE = 'TABLE'";
     /** Parameters: 1 = exact owner schema, 2 = exact table name. */
     public static final String SQL_COLUMN_COMMENTS =
             "SELECT COLUMN_NAME, COMMENTS FROM ALL_COL_COMMENTS"
