@@ -14,6 +14,11 @@ import {
   isDmDbType,
   quoteCreateTableIdentifier,
 } from '../../lib/sqlComment';
+import {
+  buildDmCreateIndexStatement,
+  buildInlineIndexDefinition,
+  getCreateTableColumnTypes,
+} from '../../lib/createTableDialect';
 
 const MIN_WIDTH = 520;
 const MIN_HEIGHT = 400;
@@ -33,20 +38,6 @@ function fitToViewport(width: number, height: number) {
     height: Math.max(MIN_HEIGHT, Math.min(height, window.innerHeight - VIEWPORT_MARGIN * 2)),
   };
 }
-
-const COMMON_TYPES = [
-  'INT',
-  'BIGINT',
-  'VARCHAR(255)',
-  'TEXT',
-  'DATE',
-  'DATETIME',
-  'TIMESTAMP',
-  'DECIMAL(10,2)',
-  'BOOLEAN',
-  'FLOAT',
-  'DOUBLE',
-] as const;
 
 export type TreeSectionId = 'columns' | 'keys' | 'foreign_keys' | 'indexes' | 'checks' | 'virtual_columns' | 'virtual_fk';
 
@@ -316,13 +307,10 @@ export function useCreateTableDialogState({
           parts.push(`  CONSTRAINT fk_${tblName}_${i + 1} FOREIGN KEY (${q(fk.column.trim())}) REFERENCES ${q(fk.refTable.trim())} (${q(fk.refColumn.trim())})`);
         });
     }
-    if (hasIdx && indexes.length > 0) {
+    if (hasIdx && !isDmDbType(dbType) && indexes.length > 0) {
       indexes
         .filter((idx) => idx.name.trim() && idx.columns.trim())
-        .forEach((idx) => {
-          const cols = idx.columns.trim().split(/\s*,\s*/).map((c) => q(c.trim())).join(', ');
-          parts.push(`  KEY ${q(idx.name.trim())} (${cols})`);
-        });
+        .forEach((idx) => parts.push(buildInlineIndexDefinition(idx, dbType)));
     }
     return `create table ${q(tblName)}\n(\n${parts.join(',\n')}\n)`;
   }, [
@@ -340,6 +328,18 @@ export function useCreateTableDialogState({
     [tableComment, dbType],
   );
 
+  const dmIndexStatements = useMemo(() => {
+    if (!isDmDbType(dbType) || !checkedSections.has('indexes')) return [];
+    return indexes
+      .filter((idx) => idx.name.trim() && idx.columns.trim())
+      .map((idx) => buildDmCreateIndexStatement(
+        schema,
+        tableName.trim() || 'table_name',
+        idx,
+        dbType,
+      ));
+  }, [checkedSections, dbType, indexes, schema, tableName]);
+
   const dmCommentStatement = useMemo(() => {
     if (!isDmDbType(dbType) || !tableComment.trim()) return '';
     return buildDmCommentOnTableStatement(
@@ -350,16 +350,14 @@ export function useCreateTableDialogState({
     );
   }, [dbType, schema, tableComment, tableName]);
 
-  /** SQL actually executed: the CREATE TABLE statement plus MySQL's inline comment clause. */
   const createTableSql = useMemo(
     () => `${baseSql.replace(/^create table/i, 'CREATE TABLE')}${mysqlCommentClause}`,
     [baseSql, mysqlCommentClause],
   );
 
-  /** What the preview shows: the executed statement, plus DM's separate comment statement. */
   const previewSql = useMemo(
-    () => (dmCommentStatement ? `${createTableSql};\n${dmCommentStatement};` : createTableSql),
-    [createTableSql, dmCommentStatement],
+    () => [createTableSql, ...dmIndexStatements, dmCommentStatement].filter(Boolean).join(';\n'),
+    [createTableSql, dmCommentStatement, dmIndexStatements],
   );
 
   const handleSubmit = async () => {
@@ -392,6 +390,20 @@ export function useCreateTableDialogState({
         const errMsg = response.messages?.[0]?.message ?? response.errorMessage ?? 'Unknown error';
         toast.error(`${t(I18N_KEYS.EXPLORER.CREATE_TABLE_FAILED)}: ${errMsg}`);
         return;
+      }
+
+      for (const sql of dmIndexStatements) {
+        const indexResponse = await tableService.createTable({
+          connectionId: Number(connectionId),
+          databaseName: catalog || undefined,
+          schemaName: schema ?? undefined,
+          sql,
+        });
+        if (indexResponse.type === 'ERROR' || !indexResponse.success) {
+          const errMsg = indexResponse.messages?.[0]?.message ?? indexResponse.errorMessage ?? 'Unknown error';
+          toast.error(`${t(I18N_KEYS.EXPLORER.CREATE_TABLE_FAILED)}: ${errMsg}`);
+          return;
+        }
       }
 
       toast.success(t(I18N_KEYS.EXPLORER.CREATE_TABLE_SUCCESS));
@@ -432,7 +444,7 @@ export function useCreateTableDialogState({
     MIN_HEIGHT,
     DEFAULT_WIDTH,
     DEFAULT_HEIGHT,
-    COMMON_TYPES,
+    COMMON_TYPES: getCreateTableColumnTypes(dbType),
     formScrollRef,
     handleFormWheel,
     tableName,

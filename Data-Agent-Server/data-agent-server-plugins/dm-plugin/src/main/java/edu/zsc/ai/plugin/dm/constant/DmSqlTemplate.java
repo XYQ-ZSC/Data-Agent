@@ -39,6 +39,14 @@ public final class DmSqlTemplate {
             "SELECT COLUMN_NAME, COMMENTS FROM ALL_COL_COMMENTS"
                     + " WHERE OWNER = ? AND TABLE_NAME = ?";
 
+    // --- Identity columns (parameters: 1 = exact table name, 2 = exact owner schema) ---
+    public static final String SQL_AUTO_INCREMENT_COLUMNS =
+            "SELECT c.NAME FROM SYS.SYSCOLUMNS c"
+                    + " JOIN SYS.SYSOBJECTS o ON c.ID = o.ID"
+                    + " WHERE c.INFO2 = 1 AND o.NAME = ?"
+                    + " AND o.SCHID = (SELECT s.ID FROM SYS.SYSOBJECTS s"
+                    + " WHERE s.NAME = ? AND s.TYPE$ = 'SCH')";
+
     /** %1$s = full table name, %2$s = escaped comment text */
     public static final String SQL_COMMENT_ON_TABLE = "COMMENT ON TABLE %s IS '%s'";
     /** %1$s = full table name, %2$s = quoted column name, %3$s = escaped comment text */

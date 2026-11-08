@@ -6,8 +6,10 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import org.apache.commons.lang3.StringUtils;
 
@@ -166,6 +168,25 @@ public final class DmMetadataSupport {
             throw new RuntimeException("Failed to get column comments: " + e.getMessage(), e);
         }
         return comments;
+    }
+
+    public Set<String> getAutoIncrementColumns(Connection connection, String owner, String tableName) {
+        Set<String> columns = new LinkedHashSet<>();
+        try (PreparedStatement statement = connection.prepareStatement(DmSqlTemplate.SQL_AUTO_INCREMENT_COLUMNS)) {
+            statement.setString(1, tableName);
+            statement.setString(2, owner);
+            try (ResultSet resultSet = statement.executeQuery()) {
+                while (resultSet.next()) {
+                    String name = resultSet.getString(1);
+                    if (StringUtils.isNotBlank(name)) {
+                        columns.add(name);
+                    }
+                }
+            }
+        } catch (SQLException e) {
+            throw new RuntimeException("Failed to get auto-increment columns: " + e.getMessage(), e);
+        }
+        return columns;
     }
 
     public void dropObject(Connection connection, String schema, String objectName,
