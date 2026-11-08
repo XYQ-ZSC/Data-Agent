@@ -35,6 +35,7 @@ export interface ExplorerTreeNodeProps {
   onViewDdl: (node: ExplorerNode) => void;
   onViewData: (node: ExplorerNode, highlightColumn?: string) => void;
   onTableOrViewDoubleClick: (node: ExplorerNode) => void;
+  onTableComment: (node: ExplorerNode) => void;
   onRename: (node: ExplorerNode) => void;
   onDelete: (node: ExplorerNode, type: ExplorerNodeType) => void;
   onOpenQueryConsole: (node: ExplorerNode) => void;
@@ -70,6 +71,7 @@ export function ExplorerTreeNode({
   onViewDdl,
   onViewData,
   onTableOrViewDoubleClick,
+  onTableComment,
   onRename,
   onDelete,
   onOpenQueryConsole,
@@ -212,6 +214,11 @@ export function ExplorerTreeNode({
             <span className="theme-text-secondary opacity-50 ml-0.5">{folderCount}</span>
           )}
         </span>
+        {node.data.type === ExplorerNodeType.TABLE && node.data.comment && (
+          <span className="theme-text-secondary text-[10px] min-w-0 max-w-[50%] truncate">
+            {node.data.comment}
+          </span>
+        )}
         {(isRoutine || node.data.type === ExplorerNodeType.CONSTRAINT) && node.data.signature && (
           <span className="theme-text-secondary text-[10px] shrink-0">{node.data.signature}</span>
         )}
@@ -269,6 +276,7 @@ export function ExplorerTreeNode({
           onOpenErDiagram={onOpenErDiagram}
           onViewDdl={onViewDdl}
           onViewData={onViewData}
+          onTableComment={onTableComment}
           onRename={onRename}
           onDelete={onDelete}
           onImportData={onImportData}

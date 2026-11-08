@@ -106,6 +106,35 @@ export const tableService = {
     return response.data;
   },
 
+  getTableComments: async (
+    connectionId: string,
+    catalog?: string,
+    schema?: string
+  ): Promise<Record<string, string>> => {
+    const params: Record<string, string> = { connectionId };
+    if (catalog != null && catalog !== '') params.catalog = catalog;
+    if (schema != null && schema !== '') params.schema = schema;
+
+    const response = await http.get<Record<string, string>>(ApiPaths.TABLES_COMMENTS, { params });
+    return response.data ?? {};
+  },
+
+  updateTableComment: async (
+    connectionId: string,
+    tableName: string,
+    comment: string,
+    catalog?: string,
+    schema?: string
+  ): Promise<void> => {
+    await http.put(ApiPaths.TABLES_COMMENT, {
+      connectionId,
+      tableName,
+      comment,
+      catalog,
+      schema,
+    });
+  },
+
   getTableDdl: async (
     connectionId: string,
     tableName: string,
