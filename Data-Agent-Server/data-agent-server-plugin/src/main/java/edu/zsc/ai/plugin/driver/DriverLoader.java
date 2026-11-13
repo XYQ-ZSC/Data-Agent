@@ -40,35 +40,59 @@ public final class DriverLoader {
         loadDriverFromJar(config.getDriverJarPath(), driverClassName);
     }
 
+    /** Connect with the driver from this configuration, rather than whichever
+     * version DriverManager registered first for the same JDBC URL. */
+    public static Connection connect(ConnectionConfig config, String driverClassName,
+                                     String jdbcUrl, Properties properties) throws SQLException {
+        String path = config.getDriverJarPath();
+        Driver driver = instantiateDriver(path, driverClassName);
+        ClassLoader loader = driver.getClass().getClassLoader();
+        Thread thread = Thread.currentThread();
+        ClassLoader original = thread.getContextClassLoader();
+        try {
+            thread.setContextClassLoader(loader);
+            Connection connection = driver.connect(jdbcUrl, properties);
+            if (connection == null) {
+                throw new SQLException("Configured JDBC driver rejected URL: " + jdbcUrl);
+            }
+            return connection;
+        } finally {
+            thread.setContextClassLoader(original);
+        }
+    }
+
     /**
      * Load driver from external JAR file
      */
     private static void loadDriverFromJar(String driverJarPath, String driverClassName) {
-        File driverJar = new File(driverJarPath);
-        if (!driverJar.exists() || !driverJar.isFile()) {
-            throw new IllegalArgumentException(
-                String.format("Driver JAR file not found: %s", driverJarPath));
+        try {
+            Driver driver = instantiateDriver(driverJarPath, driverClassName);
+            DriverManager.registerDriver(new DriverProxy(driver, driver.getClass().getClassLoader()));
+        } catch (Exception e) {
+            throw new RuntimeException(
+                String.format("Failed to load JDBC driver '%s' from %s", driverClassName, driverJarPath), e);
         }
+    }
 
-        // Use cached class loader if available
-        URLClassLoader classLoader = DRIVER_LOADERS.computeIfAbsent(driverJarPath, path -> {
+    private static Driver instantiateDriver(String driverJarPath, String driverClassName) {
+        File driverJar = new File(driverJarPath);
+        if (!driverJar.isFile()) {
+            throw new IllegalArgumentException("Driver JAR file not found: " + driverJarPath);
+        }
+        String key = driverJar.getAbsolutePath() + ":" + driverJar.length() + ":" + driverJar.lastModified();
+        URLClassLoader loader = DRIVER_LOADERS.computeIfAbsent(key, ignored -> {
             try {
                 URL jarUrl = driverJar.toURI().toURL();
                 return new URLClassLoader(new URL[]{jarUrl}, Thread.currentThread().getContextClassLoader());
             } catch (Exception e) {
-                throw new RuntimeException(
-                    String.format("Failed to create class loader for driver JAR: %s", driverJarPath), e);
+                throw new RuntimeException("Failed to create class loader for driver JAR: " + driverJarPath, e);
             }
         });
-
         try {
-            // Load driver class using the custom class loader
-            Class<?> driverClass = Class.forName(driverClassName, true, classLoader);
-            Driver driver = (Driver) driverClass.getDeclaredConstructor().newInstance();
-            DriverManager.registerDriver(new DriverProxy(driver, classLoader));
+            Class<?> driverClass = Class.forName(driverClassName, true, loader);
+            return (Driver) driverClass.getDeclaredConstructor().newInstance();
         } catch (Exception e) {
-            throw new RuntimeException(
-                String.format("Failed to load JDBC driver '%s' from %s", driverClassName, driverJarPath), e);
+            throw new RuntimeException("Failed to load JDBC driver '" + driverClassName + "' from " + driverJarPath, e);
         }
     }
 
@@ -120,4 +144,3 @@ public final class DriverLoader {
             }
         }
 }
-

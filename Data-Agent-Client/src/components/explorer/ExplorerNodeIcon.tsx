@@ -1,6 +1,8 @@
 import {
   Database,
   Folder,
+  FolderOpen,
+  ListFilter,
   Table,
   Eye,
   Rows3,
@@ -28,11 +30,11 @@ function RoutineIcon({ letter }: { letter: (typeof RoutineIconLetter)[keyof type
 }
 
 interface ExplorerNodeIconProps {
-  node: Pick<ExplorerNode, 'type' | 'folderName' | 'isPrimaryKey' | 'dbConnection'>;
+  node: Pick<ExplorerNode, 'type' | 'folderName' | 'isPrimaryKey' | 'dbConnection' | 'groupKind'>;
 }
 
 export function ExplorerNodeIcon({ node }: ExplorerNodeIconProps) {
-  const { type, folderName, isPrimaryKey, dbConnection } = node;
+  const { type, folderName, isPrimaryKey, dbConnection, groupKind } = node;
   const dbType = dbConnection?.dbType;
 
   switch (type) {
@@ -44,6 +46,12 @@ export function ExplorerNodeIcon({ node }: ExplorerNodeIconProps) {
       return <Folder className={`${ICON_CLASS} text-amber-500`} />;
     case ExplorerNodeType.FOLDER:
       return <FolderIcon folderName={folderName} />;
+    case ExplorerNodeType.GROUP:
+      return groupKind === 'rule' ? (
+        <ListFilter className={`${ICON_CLASS} text-violet-400`} />
+      ) : (
+        <FolderOpen className={`${ICON_CLASS} text-violet-400`} />
+      );
     case ExplorerNodeType.TABLE:
       return <Table className={`${ICON_CLASS} text-green-400`} />;
     case ExplorerNodeType.VIEW:
@@ -54,6 +62,10 @@ export function ExplorerNodeIcon({ node }: ExplorerNodeIconProps) {
       return <RoutineIcon letter={RoutineIconLetter.PROCEDURE} />;
     case ExplorerNodeType.TRIGGER:
       return <Zap className={`${ICON_CLASS} text-orange-400`} />;
+    case ExplorerNodeType.SEQUENCE:
+      return <Hash className={`${ICON_CLASS} text-cyan-400`} />;
+    case ExplorerNodeType.CONSTRAINT:
+      return <KeyRound className={`${ICON_CLASS} text-amber-400`} />;
     case ExplorerNodeType.COLUMN:
       return isPrimaryKey ? (
         <Key className={`${ICON_CLASS} text-amber-500`} />
@@ -91,6 +103,10 @@ function FolderIcon({ folderName }: { folderName?: string }) {
       return <FunctionSquare className={`${ICON_CLASS} text-violet-400`} />;
     case FolderName.TRIGGERS:
       return <Zap className={`${ICON_CLASS} text-orange-400`} />;
+    case FolderName.SEQUENCES:
+      return <Hash className={`${ICON_CLASS} text-cyan-400`} />;
+    case FolderName.CONSTRAINTS:
+      return <KeyRound className={`${ICON_CLASS} text-amber-400`} />;
     default:
       return <Folder className={`${ICON_CLASS} text-gray-400`} />;
   }

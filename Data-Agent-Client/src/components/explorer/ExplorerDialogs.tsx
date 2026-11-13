@@ -7,10 +7,13 @@ import { DdlViewerDialog } from './DdlViewerDialog';
 import { TableDataDialog } from './TableDataDialog';
 import { CreateTableDialog } from './CreateTableDialog';
 import { RenameTableDialog } from './RenameTableDialog';
+import { TableCommentDialog } from './TableCommentDialog';
 import { ExplorerNodeType } from '../../constants/explorer';
 import { I18N_KEYS } from '../../constants/i18nKeys';
+import { collectDeletableChildren } from '../../utils/treeOperations';
 import type { ExplorerNode } from '../../types/explorer';
 import type { DbConnection } from '../../types/connection';
+import type { NodeDialogState } from '../../hooks/useDialogState';
 
 interface ExplorerDialogsProps {
   // Connection modal
@@ -48,9 +51,14 @@ interface ExplorerDialogsProps {
   onConfirmDelete: () => void;
 
   // Rename table dialog
-  renameState: any;
-  onRenameStateChange: (state: any) => void;
+  renameState: NodeDialogState;
+  onRenameStateChange: (state: NodeDialogState) => void;
   onConfirmRename: (newName: string) => void;
+
+  // Table comment dialog
+  commentState: NodeDialogState;
+  onCommentStateChange: (state: NodeDialogState) => void;
+  onConfirmTableComment: (comment: string) => void;
 
   // Create table dialog
   createTableDialogOpen: boolean;
@@ -96,6 +104,10 @@ export function ExplorerDialogs({
   renameState,
   onRenameStateChange,
   onConfirmRename,
+
+  commentState,
+  onCommentStateChange,
+  onConfirmTableComment,
 
   createTableDialogOpen,
   onCreateTableDialogOpenChange,
@@ -199,6 +211,21 @@ export function ExplorerDialogs({
         />
       )}
 
+      {commentState.node && (
+        <TableCommentDialog
+          open={commentState.isOpen}
+          onOpenChange={(open) => {
+            if (!open) {
+              onCommentStateChange({ node: null, isOpen: false, isPending: false });
+            }
+          }}
+          tableName={commentState.node.name}
+          initialComment={commentState.node.comment ?? ''}
+          onConfirm={onConfirmTableComment}
+          isPending={commentState.isPending}
+        />
+      )}
+
       {deleteState.type && deleteState.node && (        <DeleteEntityDialog
           open={deleteState.isOpen}
           onOpenChange={(open) => {
@@ -213,7 +240,7 @@ export function ExplorerDialogs({
           isPending={deleteState.isPending}
           itemCount={
             deleteState.type === ExplorerNodeType.FOLDER
-              ? deleteState.node.children?.filter((c: any) => c.type !== 'empty').length
+              ? collectDeletableChildren(deleteState.node.children ?? []).length
               : undefined
           }
         />

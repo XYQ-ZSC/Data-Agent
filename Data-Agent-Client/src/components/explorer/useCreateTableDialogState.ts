@@ -8,25 +8,36 @@ import { useToast } from '../../hooks/useToast';
 import type { ExplorerNode } from '../../types/explorer';
 import type { DbConnection } from '../../types/connection';
 import { resolveErrorMessage } from '../../lib/errorMessage';
+import {
+  buildDmCommentOnTableStatement,
+  buildMysqlTableCommentClause,
+  isDmDbType,
+  quoteCreateTableIdentifier,
+} from '../../lib/sqlComment';
+import {
+  buildDmCreateIndexStatement,
+  buildInlineIndexDefinition,
+  getCreateTableColumnTypes,
+} from '../../lib/createTableDialect';
 
 const MIN_WIDTH = 520;
 const MIN_HEIGHT = 400;
 const DEFAULT_WIDTH = 800;
 const DEFAULT_HEIGHT = 980;
+/** Keep the dialog clear of the viewport edges when fitting / clamping. */
+const VIEWPORT_MARGIN = 16;
 
-const COMMON_TYPES = [
-  'INT',
-  'BIGINT',
-  'VARCHAR(255)',
-  'TEXT',
-  'DATE',
-  'DATETIME',
-  'TIMESTAMP',
-  'DECIMAL(10,2)',
-  'BOOLEAN',
-  'FLOAT',
-  'DOUBLE',
-] as const;
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(Math.max(value, min), Math.max(min, max));
+}
+
+/** Dialog size that still fits the current browser window. */
+function fitToViewport(width: number, height: number) {
+  return {
+    width: Math.max(MIN_WIDTH, Math.min(width, window.innerWidth - VIEWPORT_MARGIN * 2)),
+    height: Math.max(MIN_HEIGHT, Math.min(height, window.innerHeight - VIEWPORT_MARGIN * 2)),
+  };
+}
 
 export type TreeSectionId = 'columns' | 'keys' | 'foreign_keys' | 'indexes' | 'checks' | 'virtual_columns' | 'virtual_fk';
 
@@ -53,12 +64,6 @@ interface UseCreateTableDialogStateArgs {
   node: ExplorerNode | null;
   connections?: DbConnection[];
   onSuccess?: (node: ExplorerNode) => void;
-}
-
-function quoteIdentifier(name: string, dbType?: string): string {
-  if (!name.trim()) return name;
-  const isMysql = dbType?.toLowerCase().includes('mysql');
-  return isMysql ? `\`${name}\`` : `"${name.replace(/"/g, '""')}"`;
 }
 
 function validateTableName(name: string): boolean {
@@ -98,7 +103,12 @@ export function useCreateTableDialogState({
   const [isDragging, setIsDragging] = useState(false);
   const dragRef = useRef<{ startX: number; startY: number; startLeft: number; startTop: number } | null>(null);
   const [size, setSize] = useState({ width: DEFAULT_WIDTH, height: DEFAULT_HEIGHT });
+  const sizeRef = useRef(size);
   const resizeRef = useRef<{ startX: number; startY: number; startW: number; startH: number } | null>(null);
+
+  useEffect(() => {
+    sizeRef.current = size;
+  }, [size]);
 
   const connectionId = node?.connectionId ? String(node.connectionId) : undefined;
   const catalog = node?.catalog ?? (node?.type === ExplorerNodeType.DB ? node.name : '');
@@ -120,15 +130,34 @@ export function useCreateTableDialogState({
   };
 
   const initPosition = useCallback(() => {
-    setSize({ width: DEFAULT_WIDTH, height: DEFAULT_HEIGHT });
-    const x = Math.max(0, (window.innerWidth - DEFAULT_WIDTH) / 2);
-    const y = Math.max(0, (window.innerHeight - DEFAULT_HEIGHT) / 2);
-    setPosition({ x, y });
+    // Fit the default size to the window so the footer buttons stay reachable
+    // on smaller screens, then center the dialog.
+    const { width, height } = fitToViewport(DEFAULT_WIDTH, DEFAULT_HEIGHT);
+    setSize({ width, height });
+    setPosition({
+      x: clamp((window.innerWidth - width) / 2, VIEWPORT_MARGIN, window.innerWidth - width),
+      y: clamp((window.innerHeight - height) / 2, VIEWPORT_MARGIN, window.innerHeight - height),
+    });
   }, []);
 
   useEffect(() => {
     if (open) initPosition();
   }, [open, initPosition]);
+
+  // Shrink / reposition back into view when the window is resized while open.
+  useEffect(() => {
+    if (!open) return;
+    const handleWindowResize = () => {
+      const { width, height } = fitToViewport(sizeRef.current.width, sizeRef.current.height);
+      setSize({ width, height });
+      setPosition((prev) => ({
+        x: clamp(prev.x, 0, window.innerWidth - width),
+        y: clamp(prev.y, 0, window.innerHeight - height),
+      }));
+    };
+    window.addEventListener('resize', handleWindowResize);
+    return () => window.removeEventListener('resize', handleWindowResize);
+  }, [open]);
 
   const handleHeaderMouseDown = (e: ReactMouseEvent) => {
     if ((e.target as HTMLElement).closest('button, a, [role="button"]')) return;
@@ -147,9 +176,10 @@ export function useCreateTableDialogState({
       if (!dragRef.current) return;
       const dx = e.clientX - dragRef.current.startX;
       const dy = e.clientY - dragRef.current.startY;
+      // Keep the dialog fully inside the window.
       setPosition({
-        x: Math.max(0, dragRef.current.startLeft + dx),
-        y: Math.max(0, dragRef.current.startTop + dy),
+        x: clamp(dragRef.current.startLeft + dx, 0, window.innerWidth - sizeRef.current.width),
+        y: clamp(dragRef.current.startTop + dy, 0, window.innerHeight - sizeRef.current.height),
       });
     };
     const onUp = () => {
@@ -172,13 +202,16 @@ export function useCreateTableDialogState({
       startW: size.width,
       startH: size.height,
     };
+    // Clamp manual resizing to the space left between the dialog and the window edge.
+    const maxWidth = Math.max(MIN_WIDTH, window.innerWidth - position.x);
+    const maxHeight = Math.max(MIN_HEIGHT, window.innerHeight - position.y);
     const onMove = (event: MouseEvent) => {
       if (!resizeRef.current) return;
       const dw = event.clientX - resizeRef.current.startX;
       const dh = event.clientY - resizeRef.current.startY;
       setSize({
-        width: Math.max(MIN_WIDTH, resizeRef.current.startW + dw),
-        height: Math.max(MIN_HEIGHT, resizeRef.current.startH + dh),
+        width: clamp(resizeRef.current.startW + dw, MIN_WIDTH, maxWidth),
+        height: clamp(resizeRef.current.startH + dh, MIN_HEIGHT, maxHeight),
       });
     };
     const onUp = () => {
@@ -253,8 +286,8 @@ export function useCreateTableDialogState({
     });
   };
 
-  const previewSql = useMemo(() => {
-    const q = (s: string) => quoteIdentifier(s, dbType);
+  const baseSql = useMemo(() => {
+    const q = (s: string) => quoteCreateTableIdentifier(s, dbType);
     const validCols = columns.filter((c) => c.name.trim());
     const tblName = tableName.trim() || 'table_name';
     if (validCols.length === 0) return `create table ${q(displayTableName)}\n(\n);`;
@@ -274,13 +307,10 @@ export function useCreateTableDialogState({
           parts.push(`  CONSTRAINT fk_${tblName}_${i + 1} FOREIGN KEY (${q(fk.column.trim())}) REFERENCES ${q(fk.refTable.trim())} (${q(fk.refColumn.trim())})`);
         });
     }
-    if (hasIdx && indexes.length > 0) {
+    if (hasIdx && !isDmDbType(dbType) && indexes.length > 0) {
       indexes
         .filter((idx) => idx.name.trim() && idx.columns.trim())
-        .forEach((idx) => {
-          const cols = idx.columns.trim().split(/\s*,\s*/).map((c) => q(c.trim())).join(', ');
-          parts.push(`  KEY ${q(idx.name.trim())} (${cols})`);
-        });
+        .forEach((idx) => parts.push(buildInlineIndexDefinition(idx, dbType)));
     }
     return `create table ${q(tblName)}\n(\n${parts.join(',\n')}\n)`;
   }, [
@@ -292,6 +322,43 @@ export function useCreateTableDialogState({
     displayTableName,
     [...checkedSections].sort().join(','),
   ]);
+
+  const mysqlCommentClause = useMemo(
+    () => buildMysqlTableCommentClause(tableComment, dbType),
+    [tableComment, dbType],
+  );
+
+  const dmIndexStatements = useMemo(() => {
+    if (!isDmDbType(dbType) || !checkedSections.has('indexes')) return [];
+    return indexes
+      .filter((idx) => idx.name.trim() && idx.columns.trim())
+      .map((idx) => buildDmCreateIndexStatement(
+        schema,
+        tableName.trim() || 'table_name',
+        idx,
+        dbType,
+      ));
+  }, [checkedSections, dbType, indexes, schema, tableName]);
+
+  const dmCommentStatement = useMemo(() => {
+    if (!isDmDbType(dbType) || !tableComment.trim()) return '';
+    return buildDmCommentOnTableStatement(
+      schema,
+      tableName.trim() || 'table_name',
+      tableComment,
+      dbType,
+    );
+  }, [dbType, schema, tableComment, tableName]);
+
+  const createTableSql = useMemo(
+    () => `${baseSql.replace(/^create table/i, 'CREATE TABLE')}${mysqlCommentClause}`,
+    [baseSql, mysqlCommentClause],
+  );
+
+  const previewSql = useMemo(
+    () => [createTableSql, ...dmIndexStatements, dmCommentStatement].filter(Boolean).join(';\n'),
+    [createTableSql, dmCommentStatement, dmIndexStatements],
+  );
 
   const handleSubmit = async () => {
     if (!connectionId || !tableName.trim()) return;
@@ -310,15 +377,13 @@ export function useCreateTableDialogState({
       return;
     }
 
-    const createSql = previewSql.replace(/^create table/i, 'CREATE TABLE');
-
     setIsPending(true);
     try {
       const response = await tableService.createTable({
         connectionId: Number(connectionId),
         databaseName: catalog || undefined,
         schemaName: schema ?? undefined,
-        sql: createSql,
+        sql: createTableSql,
       });
 
       if (response.type === 'ERROR' || !response.success) {
@@ -327,7 +392,42 @@ export function useCreateTableDialogState({
         return;
       }
 
+      for (const sql of dmIndexStatements) {
+        const indexResponse = await tableService.createTable({
+          connectionId: Number(connectionId),
+          databaseName: catalog || undefined,
+          schemaName: schema ?? undefined,
+          sql,
+        });
+        if (indexResponse.type === 'ERROR' || !indexResponse.success) {
+          const errMsg = indexResponse.messages?.[0]?.message ?? indexResponse.errorMessage ?? 'Unknown error';
+          toast.error(`${t(I18N_KEYS.EXPLORER.CREATE_TABLE_FAILED)}: ${errMsg}`);
+          return;
+        }
+      }
+
       toast.success(t(I18N_KEYS.EXPLORER.CREATE_TABLE_SUCCESS));
+
+      // Dialects without an inline table comment (DM) need a second statement.
+      // The table already exists, so a failure here only warns and still refreshes.
+      if (dmCommentStatement) {
+        try {
+          await tableService.updateTableComment(
+            connectionId,
+            tableName.trim(),
+            tableComment.trim(),
+            catalog || undefined,
+            schema,
+          );
+        } catch (commentError) {
+          console.error('Failed to save table comment:', commentError);
+          toast.error(resolveErrorMessage(
+            commentError,
+            t(I18N_KEYS.EXPLORER.CREATE_TABLE_COMMENT_FAILED),
+          ));
+        }
+      }
+
       handleClose(false);
       if (node) {
         onSuccess?.(node);
@@ -344,7 +444,7 @@ export function useCreateTableDialogState({
     MIN_HEIGHT,
     DEFAULT_WIDTH,
     DEFAULT_HEIGHT,
-    COMMON_TYPES,
+    COMMON_TYPES: getCreateTableColumnTypes(dbType),
     formScrollRef,
     handleFormWheel,
     tableName,

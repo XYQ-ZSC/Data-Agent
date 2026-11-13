@@ -7,10 +7,23 @@ import edu.zsc.ai.domain.model.dto.response.db.ExecuteSqlResponse;
 import edu.zsc.ai.domain.service.db.ConnectionAccessService;
 import edu.zsc.ai.domain.service.db.ConnectionService;
 import edu.zsc.ai.domain.service.db.SqlExecutionService;
+import edu.zsc.ai.domain.service.db.SqlExecutionOptions;
+import edu.zsc.ai.context.RequestContext;
+import edu.zsc.ai.common.enums.org.WorkspaceTypeEnum;
+import edu.zsc.ai.plugin.execution.StatementCancellationRegistry;
+import edu.zsc.ai.plugin.execution.StatementCancellationRegistry.CancelOutcome;
 import edu.zsc.ai.plugin.capability.CommandExecutor;
+import edu.zsc.ai.plugin.capability.SqlValidator;
 import edu.zsc.ai.plugin.manager.DefaultPluginManager;
+import edu.zsc.ai.plugin.model.command.sql.SqlBatchCommandResult;
 import edu.zsc.ai.plugin.model.command.sql.SqlCommandRequest;
 import edu.zsc.ai.plugin.model.command.sql.SqlCommandResult;
+import edu.zsc.ai.plugin.model.sql.SqlValidationResult;
+import edu.zsc.ai.plugin.model.sql.SqlType;
+import edu.zsc.ai.plugin.model.transaction.BatchExecutionState;
+import edu.zsc.ai.plugin.model.transaction.BatchMode;
+import edu.zsc.ai.plugin.model.transaction.StatementExecutionState;
+import edu.zsc.ai.plugin.model.transaction.TransactionOutcome;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -19,6 +32,10 @@ import java.sql.Connection;
 import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
+import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 @Slf4j
 @Service
@@ -27,6 +44,12 @@ public class SqlExecutionServiceImpl implements SqlExecutionService {
 
     private final ConnectionService connectionService;
     private final ConnectionAccessService connectionAccessService;
+    private final SqlCompletionMetadataCache completionCache;
+    private final ConcurrentHashMap<String, ExecutionOwner> executions = new ConcurrentHashMap<>();
+
+    private record ExecutionOwner(Long userId, WorkspaceTypeEnum workspaceType, Long orgId,
+                                  DbContext db, AtomicBoolean cancelRequested) {
+    }
 
     @Override
     public ExecuteSqlResponse executeSql(AgentExecuteSqlRequest request) {
@@ -34,29 +57,35 @@ public class SqlExecutionServiceImpl implements SqlExecutionService {
         DbContext db = DbContext.from(request);
         String sql = request.getSql();
 
-        if (isTransactionControl(sql)) {
-            return failedResponse(sql, db,
-                    "Explicit transaction control is not supported; submit the statements as one batch");
-        }
-
         connectionService.openConnection(db);
 
         ActiveConnectionRegistry.ActiveConnection active = ActiveConnectionRegistry.getOwnedConnection(db);
-        CommandExecutor<SqlCommandRequest, SqlCommandResult> executor = DefaultPluginManager.getInstance()
-                .getSqlCommandExecutorByPluginId(active.pluginId());
+        DefaultPluginManager pluginManager = DefaultPluginManager.getInstance();
+        SqlValidator validator = pluginManager.getSqlValidatorByPluginId(active.pluginId());
+
+        if (validator.isTransactionControl(sql)) {
+            return rejectedResponse(sql, db,
+                    "Explicit transaction control is not supported; submit the statements as one batch", null);
+        }
+
+        CommandExecutor<SqlCommandRequest, SqlCommandResult> executor =
+                pluginManager.getSqlCommandExecutorByPluginId(active.pluginId());
         SqlCommandResult result;
+        SqlExecutionOptions options = new SqlExecutionOptions(request.getTimeoutMs(), request.getMaxRows(),
+                request.getExecutionId());
+        registerExecution(db, options.executionId());
         try (ActiveConnectionRegistry.BorrowedConnection borrowed = active.borrowConnection()) {
-            SqlCommandRequest pluginRequest = new SqlCommandRequest();
-            pluginRequest.setConnection(borrowed.connection());
-            pluginRequest.setOriginalSql(sql);
-            pluginRequest.setExecuteSql(sql);
-            pluginRequest.setDatabase(db.catalog());
-            pluginRequest.setSchema(db.schema());
-            pluginRequest.setNeedTransaction(true);
+            SqlCommandRequest pluginRequest = pluginRequest(borrowed.connection(), db, sql,
+                    !isReadOnly(validator, sql), options);
             result = executor.executeCommand(pluginRequest);
+        } finally {
+            unregisterExecution(options.executionId());
         }
 
         ExecuteSqlResponse response = SqlExecutionConverter.toResponse(result);
+        if (result != null && result.isSuccess() && isDdl(validator, sql)) {
+            completionCache.invalidate(db.connectionId());
+        }
         if (response != null) {
             response.setDatabaseName(db.catalog());
             response.setSchemaName(db.schema());
@@ -66,75 +95,425 @@ public class SqlExecutionServiceImpl implements SqlExecutionService {
 
     @Override
     public List<ExecuteSqlResponse> executeBatchSql(DbContext db, List<String> sqls) {
-        if (sqls.stream().anyMatch(this::isTransactionControl)) {
-            return sqls.stream()
-                    .map(sql -> failedResponse(sql, db,
-                            "Explicit transaction control is not supported; the batch is already transactional"))
-                    .toList();
-        }
+        return executeBatchSql(db, sqls, BatchMode.ATOMIC);
+    }
 
+    @Override
+    public List<ExecuteSqlResponse> executeBatchSql(DbContext db, List<String> sqls, BatchMode mode) {
+        return executeBatchSql(db, sqls, mode, SqlExecutionOptions.DEFAULT);
+    }
+
+    @Override
+    public List<ExecuteSqlResponse> executeBatchSql(DbContext db, List<String> sqls, BatchMode mode,
+                                                    SqlExecutionOptions options) {
         connectionService.openConnection(db);
 
         ActiveConnectionRegistry.ActiveConnection active = ActiveConnectionRegistry.getOwnedConnection(db);
-        CommandExecutor<SqlCommandRequest, SqlCommandResult> executor = DefaultPluginManager.getInstance()
-                .getSqlCommandExecutorByPluginId(active.pluginId());
+        DefaultPluginManager pluginManager = DefaultPluginManager.getInstance();
+        SqlValidator validator = pluginManager.getSqlValidatorByPluginId(active.pluginId());
 
-        List<ExecuteSqlResponse> responses = new ArrayList<>(sqls.size());
+        if (sqls.stream().anyMatch(validator::isTransactionControl)) {
+            return sqls.stream()
+                    .map(sql -> rejectedResponse(sql, db,
+                            "Explicit transaction control is not supported; the batch is already transactional",
+                            BatchExecutionState.FAILED))
+                    .toList();
+        }
+
+        if (mode == BatchMode.ATOMIC && sqls.stream().anyMatch(sql -> !isAtomicStatement(validator, sql))) {
+            return sqls.stream()
+                    .map(sql -> rejectedResponse(sql, db,
+                            "Atomic mode accepts only validated queries and transactional DML; use STEPWISE for DDL or unknown statements",
+                            BatchExecutionState.FAILED))
+                    .toList();
+        }
+
+        CommandExecutor<SqlCommandRequest, SqlCommandResult> executor =
+                pluginManager.getSqlCommandExecutorByPluginId(active.pluginId());
+
+        SqlBatchCommandResult batch;
+        registerExecution(db, options.executionId());
         try (ActiveConnectionRegistry.BorrowedConnection borrowed = active.borrowConnection()) {
             Connection connection = borrowed.connection();
-            boolean originalAutoCommit = getAutoCommit(connection);
-            try {
-                connection.setAutoCommit(false);
-                for (int i = 0; i < sqls.size(); i++) {
-                    String sql = sqls.get(i);
-                    SqlCommandRequest pluginRequest = new SqlCommandRequest();
-                    pluginRequest.setConnection(connection);
-                    pluginRequest.setOriginalSql(sql);
-                    pluginRequest.setExecuteSql(sql);
-                    pluginRequest.setDatabase(db.catalog());
-                    pluginRequest.setSchema(db.schema());
-                    pluginRequest.setNeedTransaction(false);
-
-                    SqlCommandResult result = executor.executeCommand(pluginRequest);
-                    ExecuteSqlResponse response = SqlExecutionConverter.toResponse(result);
-                    if (response != null) {
-                        response.setDatabaseName(db.catalog());
-                        response.setSchemaName(db.schema());
-                    }
-                    responses.add(response);
-
-                    if (!result.isSuccess()) {
-                        connection.rollback();
-                        markBatchRolledBack(responses, sqls, i, db);
-                        return responses;
-                    }
-                }
-                connection.commit();
-            } catch (Exception e) {
-                rollbackQuietly(connection, e);
-                log.warn("Batch SQL execution failed and was rolled back: {}", e.getMessage());
-                addBatchExceptionResponses(responses, sqls, db, e);
-            } finally {
-                restoreAutoCommit(connection, originalAutoCommit);
+            batch = mode == BatchMode.STEPWISE
+                    ? executeStepwise(connection, executor, db, sqls, options)
+                    : executeAtomic(connection, executor, validator, db, sqls, options);
+        } finally {
+            unregisterExecution(options.executionId());
+        }
+        for (int i = 0; i < batch.getResults().size(); i++) {
+            SqlCommandResult result = batch.getResults().get(i);
+            if (result.isSuccess() && isDdl(validator, sqls.get(i))) {
+                completionCache.invalidate(db.connectionId());
+                break;
             }
         }
+        return toResponses(batch, db);
+    }
+
+    /**
+     * ATOMIC: the whole batch runs in one transaction. Historical per-statement facts are
+     * never rewritten — after a confirmed rollback, executed statements are marked
+     * ROLLED_BACK (or UNKNOWN past an implicit-committing DDL), the failed statement keeps
+     * its own FAILED state, and the rest are NOT_EXECUTED.
+     */
+    private SqlBatchCommandResult executeAtomic(Connection connection,
+                                                CommandExecutor<SqlCommandRequest, SqlCommandResult> executor,
+                                                SqlValidator validator,
+                                                DbContext db, List<String> sqls, SqlExecutionOptions options) {
+        long started = System.currentTimeMillis();
+        boolean originalAutoCommit = getAutoCommit(connection);
+        List<SqlCommandResult> results = new ArrayList<>(sqls.size());
+        int failedIndex = -1;
+        TransactionOutcome transactionOutcome = TransactionOutcome.NONE;
+        BatchExecutionState batchState;
+        try {
+            connection.setAutoCommit(false);
+            for (int i = 0; i < sqls.size(); i++) {
+                if (isCancellationRequested(options.executionId())) {
+                    results.add(notExecutedStub(sqls.get(i), "Not executed because cancellation was requested"));
+                    failedIndex = i;
+                    break;
+                }
+                SqlCommandResult result = executor.executeCommand(
+                        pluginRequest(connection, db, sqls.get(i), false, options));
+                results.add(result);
+                if (!result.isSuccess()) {
+                    failedIndex = i;
+                    break;
+                }
+            }
+
+            if (failedIndex < 0) {
+                try {
+                    connection.commit();
+                    transactionOutcome = TransactionOutcome.COMMITTED;
+                    batchState = BatchExecutionState.SUCCESS;
+                    for (SqlCommandResult result : results) {
+                        result.setStatementState(StatementExecutionState.COMMITTED);
+                        result.setTransactionOutcome(TransactionOutcome.COMMITTED);
+                    }
+                } catch (SQLException commitException) {
+                    log.warn("Batch commit failed, outcome undecidable: {}", commitException.getMessage());
+                    transactionOutcome = TransactionOutcome.UNKNOWN;
+                    batchState = BatchExecutionState.UNKNOWN;
+                    markUnknown(results);
+                    if (rollbackQuietly(connection, commitException)) {
+                        transactionOutcome = TransactionOutcome.ROLLED_BACK;
+                        batchState = markConfirmedRollback(results, sqls, -1, validator);
+                    }
+                }
+            } else if (rollbackQuietly(connection, null)) {
+                transactionOutcome = TransactionOutcome.ROLLED_BACK;
+                batchState = markConfirmedRollback(results, sqls, failedIndex, validator);
+            } else {
+                log.warn("Batch rollback failed, outcome undecidable");
+                transactionOutcome = TransactionOutcome.UNKNOWN;
+                batchState = BatchExecutionState.UNKNOWN;
+                markExecutedUnknown(results, failedIndex);
+            }
+        } catch (SQLException e) {
+            // batch never started (e.g. setAutoCommit refused)
+            log.warn("Batch failed to start: {}", e.getMessage());
+            batchState = BatchExecutionState.FAILED;
+            transactionOutcome = TransactionOutcome.NONE;
+        } catch (RuntimeException e) {
+            log.warn("Batch aborted unexpectedly: {}", e.getMessage());
+            rollbackQuietly(connection, e);
+            batchState = BatchExecutionState.UNKNOWN;
+            transactionOutcome = TransactionOutcome.UNKNOWN;
+            markExecutedUnknown(results, results.size());
+        } finally {
+            restoreAutoCommit(connection, originalAutoCommit);
+        }
+
+        String skipMessage = transactionOutcome == TransactionOutcome.ROLLED_BACK
+                ? "Not executed because the batch transaction was rolled back"
+                : "Not executed because the batch failed";
+        for (int i = results.size(); i < sqls.size(); i++) {
+            results.add(notExecutedStub(sqls.get(i), skipMessage));
+        }
+        return batchResult(batchState, BatchMode.ATOMIC, transactionOutcome,
+                failedIndex < 0 ? null : failedIndex, results, started);
+    }
+
+    /**
+     * STEPWISE: every statement commits independently; execution continues after failures.
+     */
+    private SqlBatchCommandResult executeStepwise(Connection connection,
+                                                  CommandExecutor<SqlCommandRequest, SqlCommandResult> executor,
+                                                  DbContext db, List<String> sqls, SqlExecutionOptions options) {
+        long started = System.currentTimeMillis();
+        List<SqlCommandResult> results = new ArrayList<>(sqls.size());
+        for (String sql : sqls) {
+            if (isCancellationRequested(options.executionId())) {
+                break;
+            }
+            SqlCommandResult result = executor.executeCommand(pluginRequest(connection, db, sql, true, options));
+            results.add(result);
+            if (result.getStatementState() == StatementExecutionState.CANCELLED
+                    || result.getStatementState() == StatementExecutionState.TIMED_OUT
+                    || result.getStatementState() == StatementExecutionState.UNKNOWN) {
+                break;
+            }
+        }
+        for (int i = results.size(); i < sqls.size(); i++) {
+            results.add(notExecutedStub(sqls.get(i), "Not executed after cancellation, timeout or unknown outcome"));
+        }
+
+        int failedIndex = -1;
+        int committed = 0;
+        boolean undecidable = false;
+        for (int i = 0; i < results.size(); i++) {
+            SqlCommandResult result = results.get(i);
+            if (!result.isSuccess() && failedIndex < 0) {
+                failedIndex = i;
+            }
+            if (result.getStatementState() == StatementExecutionState.COMMITTED) {
+                committed++;
+            }
+            if (result.getTransactionOutcome() == TransactionOutcome.UNKNOWN) {
+                undecidable = true;
+            }
+        }
+
+        BatchExecutionState batchState;
+        TransactionOutcome transactionOutcome;
+        if (undecidable) {
+            batchState = BatchExecutionState.UNKNOWN;
+            transactionOutcome = TransactionOutcome.UNKNOWN;
+        } else if (committed == results.size()) {
+            batchState = BatchExecutionState.SUCCESS;
+            transactionOutcome = TransactionOutcome.COMMITTED;
+        } else if (committed == 0) {
+            batchState = BatchExecutionState.FAILED;
+            transactionOutcome = TransactionOutcome.NONE;
+        } else {
+            batchState = BatchExecutionState.PARTIAL;
+            transactionOutcome = TransactionOutcome.NONE;
+        }
+        return batchResult(batchState, BatchMode.STEPWISE, transactionOutcome,
+                failedIndex < 0 ? null : failedIndex, results, started);
+    }
+
+    /**
+     * Mark per-statement states after a confirmed rollback of the batch transaction.
+     *
+     * <p>A successfully executed DDL implicitly commits the pending transaction on engines
+     * like DM (verified live on DM8), Oracle and MySQL, so statements up to and including
+     * the last executed DDL cannot be asserted rolled back — they are UNKNOWN.
+     *
+     * @param failedIndex index of the failed statement (kept FAILED), or -1 when marking
+     *                    after a commit failure
+     * @return ROLLED_BACK when every executed statement is provably rolled back, UNKNOWN otherwise
+     */
+    private BatchExecutionState markConfirmedRollback(List<SqlCommandResult> results, List<String> sqls,
+                                                      int failedIndex, SqlValidator validator) {
+        int executedSuccessfully = failedIndex < 0 ? results.size() : failedIndex;
+        int lastDdl = -1;
+        for (int i = 0; i < executedSuccessfully; i++) {
+            if (isDdl(validator, sqls.get(i))) {
+                lastDdl = i;
+            }
+        }
+        for (int i = 0; i < results.size(); i++) {
+            if (i == failedIndex) {
+                continue;
+            }
+            SqlCommandResult result = results.get(i);
+            if (i <= lastDdl) {
+                result.setStatementState(StatementExecutionState.UNKNOWN);
+                result.setTransactionOutcome(TransactionOutcome.UNKNOWN);
+            } else {
+                result.setStatementState(StatementExecutionState.ROLLED_BACK);
+                result.setTransactionOutcome(TransactionOutcome.ROLLED_BACK);
+            }
+        }
+        return lastDdl >= 0 ? BatchExecutionState.UNKNOWN : BatchExecutionState.ROLLED_BACK;
+    }
+
+    private void markUnknown(List<SqlCommandResult> results) {
+        for (SqlCommandResult result : results) {
+            result.setStatementState(StatementExecutionState.UNKNOWN);
+            result.setTransactionOutcome(TransactionOutcome.UNKNOWN);
+        }
+    }
+
+    /** After an unconfirmable rollback, previously executed statements can no longer be asserted. */
+    private void markExecutedUnknown(List<SqlCommandResult> results, int failedIndex) {
+        for (int i = 0; i < results.size(); i++) {
+            if (i == failedIndex) {
+                continue;
+            }
+            results.get(i).setStatementState(StatementExecutionState.UNKNOWN);
+            results.get(i).setTransactionOutcome(TransactionOutcome.UNKNOWN);
+        }
+    }
+
+    private SqlBatchCommandResult batchResult(BatchExecutionState batchState, BatchMode mode,
+                                              TransactionOutcome transactionOutcome, Integer failedIndex,
+                                              List<SqlCommandResult> results, long started) {
+        SqlBatchCommandResult batch = new SqlBatchCommandResult();
+        batch.setSuccess(batchState == BatchExecutionState.SUCCESS);
+        batch.setBatchState(batchState);
+        batch.setMode(mode);
+        batch.setTransactionOutcome(transactionOutcome);
+        batch.setFailedIndex(failedIndex);
+        batch.setResults(results);
+        batch.setExecutionTime(System.currentTimeMillis() - started);
+        return batch;
+    }
+
+    private List<ExecuteSqlResponse> toResponses(SqlBatchCommandResult batch, DbContext db) {
+        List<ExecuteSqlResponse> responses = new ArrayList<>(batch.getResults().size());
+        for (SqlCommandResult result : batch.getResults()) {
+            ExecuteSqlResponse response = SqlExecutionConverter.toResponse(result, batch.getBatchState());
+            if (response != null) {
+                response.setDatabaseName(db.catalog());
+                response.setSchemaName(db.schema());
+            }
+            responses.add(response);
+        }
         return responses;
+    }
+
+    private SqlCommandRequest pluginRequest(Connection connection, DbContext db, String sql,
+                                            boolean needTransaction, SqlExecutionOptions options) {
+        SqlCommandRequest request = new SqlCommandRequest();
+        request.setConnection(connection);
+        request.setOriginalSql(sql);
+        request.setExecuteSql(sql);
+        request.setDatabase(db.catalog());
+        request.setSchema(db.schema());
+        request.setNeedTransaction(needTransaction);
+        request.setTimeoutMs(options.timeoutMs());
+        request.setMaxRows(options.maxRows());
+        request.setExecutionId(options.executionId());
+        return request;
+    }
+
+    private void registerExecution(DbContext db, String executionId) {
+        if (executionId == null) {
+            return;
+        }
+        UUID.fromString(executionId);
+        ExecutionOwner owner = new ExecutionOwner(RequestContext.getUserId(),
+                RequestContext.getWorkspaceTypeOrPersonal(), RequestContext.getOrgId(), db,
+                new AtomicBoolean(false));
+        if (owner.userId() == null || executions.putIfAbsent(executionId, owner) != null) {
+            throw new IllegalArgumentException("Invalid or already active SQL execution id");
+        }
+    }
+
+    private void unregisterExecution(String executionId) {
+        if (executionId != null) {
+            executions.remove(executionId);
+        }
+    }
+
+    private boolean isCancellationRequested(String executionId) {
+        ExecutionOwner owner = executionId == null ? null : executions.get(executionId);
+        return owner != null && owner.cancelRequested().get();
+    }
+
+    @Override
+    public CancelOutcome cancelExecution(DbContext db, String executionId) {
+        connectionAccessService.assertWorkbenchApiAllowed();
+        connectionAccessService.assertReadable(db.connectionId());
+        ExecutionOwner owner = executions.get(executionId);
+        if (owner == null || !Objects.equals(owner.userId(), RequestContext.getUserId())
+                || owner.workspaceType() != RequestContext.getWorkspaceTypeOrPersonal()
+                || !Objects.equals(owner.orgId(), RequestContext.getOrgId())
+                || !owner.db().equals(db)) {
+            return CancelOutcome.NO_ACTIVE_STATEMENT;
+        }
+        owner.cancelRequested().set(true);
+        CancelOutcome outcome = StatementCancellationRegistry.getInstance().cancel(executionId);
+        return outcome == CancelOutcome.NO_ACTIVE_STATEMENT ? CancelOutcome.CANCEL_REQUESTED : outcome;
+    }
+
+    /**
+     * Read-only statements skip the explicit transaction (no useless commit round-trip).
+     * Anything the plugin validator cannot confidently classify as read-only keeps the
+     * transactional path.
+     */
+    private boolean isReadOnly(SqlValidator validator, String sql) {
+        try {
+            SqlValidationResult validation = validator.validate(sql);
+            return validation != null && validation.valid()
+                    && validation.sqlType() != null && validation.sqlType().isReadOnly();
+        } catch (RuntimeException e) {
+            log.warn("SQL validation failed, keeping transactional execution: {}", e.getMessage());
+            return false;
+        }
+    }
+
+    private boolean isDdl(SqlValidator validator, String sql) {
+        try {
+            return validator.classifySql(sql).isDdl();
+        } catch (RuntimeException e) {
+            return false;
+        }
+    }
+
+    private boolean isAtomicStatement(SqlValidator validator, String sql) {
+        try {
+            SqlValidationResult validation = validator.validate(sql);
+            if (validation == null || !validation.valid()) {
+                return false;
+            }
+            SqlType type = validation.sqlType();
+            return type == SqlType.SELECT || type == SqlType.INSERT || type == SqlType.UPDATE
+                    || type == SqlType.DELETE || type == SqlType.MERGE;
+        } catch (RuntimeException e) {
+            log.warn("Cannot establish atomic batch safety: {}", e.getMessage());
+            return false;
+        }
+    }
+
+    private SqlCommandResult notExecutedStub(String sql, String message) {
+        SqlCommandResult stub = new SqlCommandResult();
+        stub.setSuccess(false);
+        stub.setOriginalSql(sql);
+        stub.setExecutedSql(sql);
+        stub.setErrorMessage(message);
+        stub.setStatementState(StatementExecutionState.NOT_EXECUTED);
+        stub.setTransactionOutcome(TransactionOutcome.NONE);
+        return stub;
+    }
+
+    private ExecuteSqlResponse rejectedResponse(String sql, DbContext db, String message,
+                                                BatchExecutionState batchState) {
+        return ExecuteSqlResponse.builder()
+                .success(false)
+                .errorMessage(message)
+                .originalSql(sql)
+                .databaseName(db.catalog())
+                .schemaName(db.schema())
+                .statementState(StatementExecutionState.NOT_EXECUTED)
+                .transactionOutcome(TransactionOutcome.NONE)
+                .batchState(batchState)
+                .build();
     }
 
     private boolean getAutoCommit(Connection connection) {
         try {
             return connection.getAutoCommit();
         } catch (SQLException e) {
-            throw new RuntimeException("Failed to read connection auto-commit state", e);
+            throw new IllegalStateException("Failed to read connection auto-commit state", e);
         }
     }
 
-    private void rollbackQuietly(Connection connection, Exception original) {
+    private boolean rollbackQuietly(Connection connection, Exception original) {
         try {
             connection.rollback();
+            return true;
         } catch (SQLException rollbackException) {
-            original.addSuppressed(rollbackException);
+            if (original != null) {
+                original.addSuppressed(rollbackException);
+            }
             log.warn("Failed to roll back batch transaction", rollbackException);
+            return false;
         }
     }
 
@@ -144,69 +523,5 @@ public class SqlExecutionServiceImpl implements SqlExecutionService {
         } catch (SQLException e) {
             log.warn("Failed to restore connection auto-commit state", e);
         }
-    }
-
-    private void markBatchRolledBack(List<ExecuteSqlResponse> responses, List<String> sqls,
-                                     int failedIndex, DbContext db) {
-        String message = "Batch transaction rolled back because statement " + (failedIndex + 1) + " failed";
-        for (int i = 0; i < responses.size(); i++) {
-            ExecuteSqlResponse response = responses.get(i);
-            if (response == null) {
-                responses.set(i, failedResponse(sqls.get(i), db, message));
-            } else if (i < failedIndex) {
-                response.setSuccess(false);
-                response.setErrorMessage(message);
-            } else {
-                String databaseError = response.getErrorMessage();
-                response.setErrorMessage(databaseError == null ? message : databaseError + "; " + message);
-            }
-        }
-        for (int i = failedIndex + 1; i < sqls.size(); i++) {
-            responses.add(failedResponse(sqls.get(i), db,
-                    "Not executed because the batch transaction was rolled back"));
-        }
-    }
-
-    private void addBatchExceptionResponses(List<ExecuteSqlResponse> responses, List<String> sqls,
-                                            DbContext db, Exception exception) {
-        String message = "Batch transaction rolled back: " + exception.getMessage();
-        for (ExecuteSqlResponse response : responses) {
-            if (response != null) {
-                response.setSuccess(false);
-                response.setErrorMessage(message);
-            }
-        }
-        for (int i = responses.size(); i < sqls.size(); i++) {
-            responses.add(failedResponse(sqls.get(i), db, message));
-        }
-    }
-
-    private ExecuteSqlResponse failedResponse(String sql, DbContext db, String message) {
-        return ExecuteSqlResponse.builder()
-                .success(false)
-                .errorMessage(message)
-                .originalSql(sql)
-                .databaseName(db.catalog())
-                .schemaName(db.schema())
-                .build();
-    }
-
-    private boolean isTransactionControl(String sql) {
-        if (sql == null) {
-            return false;
-        }
-        String normalized = sql.stripLeading();
-        while (normalized.startsWith("--") || normalized.startsWith("/*")) {
-            if (normalized.startsWith("--")) {
-                int newline = normalized.indexOf('\n');
-                normalized = newline < 0 ? "" : normalized.substring(newline + 1).stripLeading();
-            } else {
-                int end = normalized.indexOf("*/");
-                normalized = end < 0 ? "" : normalized.substring(end + 2).stripLeading();
-            }
-        }
-        return normalized.matches("(?is)^(COMMIT|ROLLBACK)\\b.*")
-                || normalized.matches("(?is)^START\\s+TRANSACTION\\b.*")
-                || normalized.matches("(?is)^BEGIN(?:\\s*;|\\s+(?:TRANSACTION|WORK)\\b.*|\\s*)$");
     }
 }

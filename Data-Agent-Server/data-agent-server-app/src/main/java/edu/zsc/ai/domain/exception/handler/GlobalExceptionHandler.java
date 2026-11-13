@@ -18,6 +18,7 @@ import jakarta.validation.ConstraintViolationException;
 import edu.zsc.ai.common.enums.error.ErrorCodeEnum;
 import edu.zsc.ai.domain.exception.BusinessException;
 import edu.zsc.ai.domain.model.dto.response.base.ApiResponse;
+import edu.zsc.ai.plugin.connection.ConnectionFailureException;
 import edu.zsc.ai.util.I18nUtils;
 import lombok.extern.slf4j.Slf4j;
 
@@ -26,8 +27,28 @@ import lombok.extern.slf4j.Slf4j;
 @RestControllerAdvice
 public class GlobalExceptionHandler {
 
+    @ExceptionHandler(edu.zsc.ai.domain.service.ai.model.ModelManagementException.class)
+    public ResponseEntity<ApiResponse<Void>> handleModelStorageException(edu.zsc.ai.domain.service.ai.model.ModelManagementException error) {
+        return ResponseEntity.status(error.status()).body(ApiResponse.error(error.status().value(), error.getMessage()));
+    }
+
+    @ExceptionHandler(edu.zsc.ai.config.ai.model.ModelIntegrationException.class)
+    public ResponseEntity<ApiResponse<Void>> handleModelIntegrationException(edu.zsc.ai.config.ai.model.ModelIntegrationException error) {
+        // Only the stable model error code is exposed; no provider body, URL or credentials.
+        return ResponseEntity.status(error.getStatusCode()).body(ApiResponse.error(error.getStatusCode().value(), error.getReason()));
+    }
+
     @Autowired
     private I18nUtils i18nUtils;
+
+    @ExceptionHandler(ConnectionFailureException.class)
+    public ResponseEntity<ApiResponse<Void>> handleConnectionFailure(ConnectionFailureException e) {
+        log.warn("Connection failed: category={}, sqlState={}, errorCode={}",
+                e.getCategory(), e.getSqlState(), e.getErrorCode());
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                .body(ApiResponse.error(ErrorCodeEnum.PARAMS_ERROR,
+                        e.getCategory() + ": " + e.getMessage()));
+    }
 
 
     @ExceptionHandler(BusinessException.class)
@@ -113,4 +134,3 @@ public class GlobalExceptionHandler {
                 .body(ApiResponse.error(ErrorCodeEnum.NO_AUTH_ERROR, message));
     }
 }
-

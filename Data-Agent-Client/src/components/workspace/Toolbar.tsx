@@ -14,6 +14,7 @@ import { Button } from '../ui/Button';
 import { TransactionMode, IsolationLevel } from '../../constants/transactionSettings';
 import { TransactionModeSelector } from './TransactionModeSelector';
 import { getPlatformShortcuts } from '../../lib/platformShortcuts';
+import type { SqlBatchMode } from '../../types/sql';
 
 interface ToolbarProps {
   onRun: () => void;
@@ -24,6 +25,13 @@ interface ToolbarProps {
   currentDatabase?: string | null;
   onDatabaseChange?: (db: string) => void;
   extraActions?: ReactNode;
+  scriptMode?: SqlBatchMode;
+  onScriptModeChange?: (mode: SqlBatchMode) => void;
+  timeoutSeconds?: number;
+  onTimeoutSecondsChange?: (seconds: number) => void;
+  maxRows?: number;
+  onMaxRowsChange?: (rows: number) => void;
+  showTransactionControls?: boolean;
 }
 
 export function Toolbar({
@@ -35,6 +43,13 @@ export function Toolbar({
   currentDatabase,
   onDatabaseChange,
   extraActions,
+  scriptMode,
+  onScriptModeChange,
+  timeoutSeconds,
+  onTimeoutSecondsChange,
+  maxRows,
+  onMaxRowsChange,
+  showTransactionControls = true,
 }: ToolbarProps) {
   const { t } = useTranslation();
   const shortcuts = getPlatformShortcuts();
@@ -106,12 +121,46 @@ export function Toolbar({
       <div className="mx-1 workbench-toolbar-divider" />
 
       {/* Transaction Mode Selector */}
-      <TransactionModeSelector
-        transactionMode={transactionMode}
-        isolationLevel={isolationLevel}
-        onTransactionModeChange={setTransactionMode}
-        onIsolationLevelChange={setIsolationLevel}
-      />
+      {showTransactionControls && (
+        <TransactionModeSelector
+          transactionMode={transactionMode}
+          isolationLevel={isolationLevel}
+          onTransactionModeChange={setTransactionMode}
+          onIsolationLevelChange={setIsolationLevel}
+        />
+      )}
+
+      {onScriptModeChange && (
+        <select
+          aria-label="SQL script execution mode"
+          className="workbench-pill theme-text-primary text-[10px]"
+          value={scriptMode ?? 'ATOMIC'}
+          disabled={isRunning}
+          onChange={event => onScriptModeChange(event.target.value as SqlBatchMode)}
+          title="Atomic: validated queries and DML only. Stepwise: each statement commits separately, including DDL."
+        >
+          <option value="ATOMIC">Atomic script</option>
+          <option value="STEPWISE">Stepwise script</option>
+        </select>
+      )}
+      {onTimeoutSecondsChange && (
+        <label className="flex items-center gap-1 text-[10px]" title="Per-statement timeout in seconds">
+          Timeout
+          <input type="number" aria-label="SQL timeout seconds" min={1} max={300}
+            value={timeoutSeconds ?? 30} disabled={isRunning}
+            onChange={event => onTimeoutSecondsChange(Math.min(300, Math.max(1, Number(event.target.value) || 1)))}
+            className="workbench-pill w-14 text-[10px]" />s
+        </label>
+      )}
+      {onMaxRowsChange && (
+        <label className="flex items-center gap-1 text-[10px]" title="Maximum rows returned per result">
+          Rows
+          <input type="number" aria-label="SQL maximum rows" min={1} max={100000}
+            value={maxRows ?? 10000} disabled={isRunning}
+            onChange={event => onMaxRowsChange(Math.min(100000, Math.max(1, Number(event.target.value) || 1)))}
+            className="workbench-pill w-20 text-[10px]" />
+        </label>
+      )}
 
       {extraActions && (
         <>
@@ -124,7 +173,7 @@ export function Toolbar({
       )}
 
       {/* Commit and Rollback Buttons (Manual Mode Only) */}
-      {transactionMode === TransactionMode.MANUAL && (
+      {showTransactionControls && transactionMode === TransactionMode.MANUAL && (
         <>
           <Button
             variant="ghost"

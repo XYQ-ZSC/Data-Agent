@@ -2,6 +2,8 @@ package edu.zsc.ai.domain.model.dto.request.db;
 
 import edu.zsc.ai.api.model.request.BaseRequest;
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Min;
+import jakarta.validation.constraints.Max;
 import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
@@ -22,4 +24,12 @@ public class ExecuteSqlRequest extends BaseRequest {
 
     @NotBlank(message = "SQL cannot be null or empty")
     private String sql;
+
+    @Min(1) @Max(300000)
+    private Integer timeoutMs;
+
+    @Min(1) @Max(100000)
+    private Integer maxRows;
+
+    private String executionId;
 }

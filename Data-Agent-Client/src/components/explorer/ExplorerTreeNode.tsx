@@ -18,6 +18,7 @@ import { Button } from '../ui/Button';
 import { ExplorerNodeIcon } from './ExplorerNodeIcon';
 import { ExplorerNodeType, ExplorerIdPrefix } from '../../constants/explorer';
 import type { ExplorerNode } from '../../types/explorer';
+import type { SqlStatementType } from '../../utils/sqlGenerator';
 import { NodeContextMenuContent } from './NodeContextMenuContent';
 import type { ExplorerNodeHydrationState } from '../../hooks/useConnectionTree';
 
@@ -34,10 +35,28 @@ export interface ExplorerTreeNodeProps {
   onViewDdl: (node: ExplorerNode) => void;
   onViewData: (node: ExplorerNode, highlightColumn?: string) => void;
   onTableOrViewDoubleClick: (node: ExplorerNode) => void;
+  onTableComment: (node: ExplorerNode) => void;
   onRename: (node: ExplorerNode) => void;
   onDelete: (node: ExplorerNode, type: ExplorerNodeType) => void;
   onOpenQueryConsole: (node: ExplorerNode) => void;
+  onRunSqlScript: (node: ExplorerNode) => void;
+  onSqlGenerator: (node: ExplorerNode) => void;
+  onGenerateSql: (node: ExplorerNode, statementType: SqlStatementType) => void;
   onCreateTable: (node: ExplorerNode) => void;
+  onImportData: (node: ExplorerNode) => void;
+  onExportData: (node: ExplorerNode) => void;
+  onExportTablesWizard: (node: ExplorerNode) => void;
+  onImportTablesWizard: (node: ExplorerNode) => void;
+  onOpenErDiagram: (node: ExplorerNode) => void;
+  onSchemaCompare: (node: ExplorerNode) => void;
+  onCreateGroup: (node: ExplorerNode) => void;
+  onCreateRuleGroup: (node: ExplorerNode) => void;
+  onRenameGroup: (node: ExplorerNode) => void;
+  onDeleteGroup: (node: ExplorerNode) => void;
+  onClearGroup: (node: ExplorerNode) => void;
+  onEditGroupRule: (node: ExplorerNode) => void;
+  onMoveTableToGroup: (node: ExplorerNode, groupId: string) => void;
+  onRemoveTableFromGroup: (node: ExplorerNode, groupId: string) => void;
 }
 
 export function ExplorerTreeNode({
@@ -53,10 +72,28 @@ export function ExplorerTreeNode({
   onViewDdl,
   onViewData,
   onTableOrViewDoubleClick,
+  onTableComment,
   onRename,
   onDelete,
   onOpenQueryConsole,
+  onRunSqlScript,
+  onSqlGenerator,
+  onGenerateSql,
   onCreateTable,
+  onImportData,
+  onExportData,
+  onExportTablesWizard,
+  onImportTablesWizard,
+  onOpenErDiagram,
+  onSchemaCompare,
+  onCreateGroup,
+  onCreateRuleGroup,
+  onRenameGroup,
+  onDeleteGroup,
+  onClearGroup,
+  onEditGroupRule,
+  onMoveTableToGroup,
+  onRemoveTableFromGroup,
 }: ExplorerTreeNodeProps) {
   const { t } = useTranslation();
   const isConnected = !!node.data.connectionId;
@@ -65,20 +102,23 @@ export function ExplorerTreeNode({
     node.data.type === ExplorerNodeType.VIEW ||
     node.data.type === ExplorerNodeType.FUNCTION ||
     node.data.type === ExplorerNodeType.PROCEDURE ||
-    node.data.type === ExplorerNodeType.TRIGGER;
+    node.data.type === ExplorerNodeType.TRIGGER ||
+    node.data.type === ExplorerNodeType.SEQUENCE ||
+    node.data.type === ExplorerNodeType.CONSTRAINT;
   const isTableOrView = node.data.type === ExplorerNodeType.TABLE || node.data.type === ExplorerNodeType.VIEW;
   const isColumnOrIndexOrKey = node.data.type === ExplorerNodeType.COLUMN || node.data.type === ExplorerNodeType.INDEX || node.data.type === ExplorerNodeType.KEY;
-  const isRoutineOrTrigger = node.data.type === ExplorerNodeType.FUNCTION || node.data.type === ExplorerNodeType.PROCEDURE || node.data.type === ExplorerNodeType.TRIGGER;
+  const isRoutineOrTrigger = node.data.type === ExplorerNodeType.FUNCTION || node.data.type === ExplorerNodeType.PROCEDURE || node.data.type === ExplorerNodeType.TRIGGER || node.data.type === ExplorerNodeType.SEQUENCE || node.data.type === ExplorerNodeType.CONSTRAINT;
   const isRoutine =
     node.data.type === ExplorerNodeType.FUNCTION || node.data.type === ExplorerNodeType.PROCEDURE;
   const isFolder = node.data.type === ExplorerNodeType.FOLDER;
+  const isGroup = node.data.type === ExplorerNodeType.GROUP;
   const isDb = node.data.type === ExplorerNodeType.DB;
-  // Only folders containing deletable objects (Tables, Views, Routines, Triggers) show delete button
+  // Only folders containing deletable objects (Tables, Views, Routines, Triggers, Sequences) show delete button
   // Structural folders (Columns, Keys, Indexes) do not show delete button
   const isDeletableFolder = isFolder && node.data.folderName &&
-    ['tables', 'views', 'routines', 'triggers'].includes(node.data.folderName);
+    ['tables', 'views', 'routines', 'triggers', 'sequences'].includes(node.data.folderName);
   const folderCount =
-    isFolder &&
+    (isFolder || isGroup) &&
     node.data.children &&
     node.data.children.length > 0
       ? node.data.children.filter((c) => c.type !== ExplorerNodeType.EMPTY).length
@@ -172,11 +212,16 @@ export function ExplorerTreeNode({
           )}
         >
           {node.data.name}
-          {isFolder && folderCount != null && (
+          {(isFolder || isGroup) && folderCount != null && (
             <span className="theme-text-secondary opacity-50 ml-0.5">{folderCount}</span>
           )}
         </span>
-        {isRoutine && node.data.signature && (
+        {node.data.type === ExplorerNodeType.TABLE && node.data.comment && (
+          <span className="theme-text-secondary text-[10px] min-w-0 max-w-[50%] truncate">
+            {node.data.comment}
+          </span>
+        )}
+        {(isRoutine || node.data.type === ExplorerNodeType.CONSTRAINT) && node.data.signature && (
           <span className="theme-text-secondary text-[10px] shrink-0">{node.data.signature}</span>
         )}
         {node.data.type === ExplorerNodeType.COLUMN && node.data.signature && (
@@ -226,11 +271,29 @@ export function ExplorerTreeNode({
           node={node.data}
           isConnected={isConnected}
           onOpenQueryConsole={onOpenQueryConsole}
+          onRunSqlScript={onRunSqlScript}
+          onSqlGenerator={onSqlGenerator}
+          onGenerateSql={onGenerateSql}
           onCreateTable={onCreateTable}
+          onOpenErDiagram={onOpenErDiagram}
+          onSchemaCompare={onSchemaCompare}
           onViewDdl={onViewDdl}
           onViewData={onViewData}
+          onTableComment={onTableComment}
           onRename={onRename}
           onDelete={onDelete}
+          onImportData={onImportData}
+          onExportData={onExportData}
+          onExportTablesWizard={onExportTablesWizard}
+          onImportTablesWizard={onImportTablesWizard}
+          onCreateGroup={onCreateGroup}
+          onCreateRuleGroup={onCreateRuleGroup}
+          onRenameGroup={onRenameGroup}
+          onDeleteGroup={onDeleteGroup}
+          onClearGroup={onClearGroup}
+          onEditGroupRule={onEditGroupRule}
+          onMoveTableToGroup={onMoveTableToGroup}
+          onRemoveTableFromGroup={onRemoveTableFromGroup}
         />
       </ContextMenu>
     );

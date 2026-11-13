@@ -1,18 +1,47 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
+import { useTranslation } from 'react-i18next';
 import { useWorkspaceStore } from '../../store/workspaceStore';
+import { useAuthStore } from '../../store/authStore';
+import { useTabStore } from '../../store/tabStore';
+import { useToast } from '../../hooks/useToast';
+import type { TableTabMetadata } from '../../types/tab';
 import { useConnectionTree } from '../../hooks/useConnectionTree';
 import { useDialogState } from '../../hooks/useDialogState';
 import { useConnectionActions } from '../../hooks/useConnectionActions';
 import { useDataViewActions } from '../../hooks/useDataViewActions';
 import { useDeleteActions } from '../../hooks/useDeleteActions';
 import { useRenameActions } from '../../hooks/useRenameActions';
+import { useTableCommentActions } from '../../hooks/useTableCommentActions';
+import { I18N_KEYS } from '../../constants/i18nKeys';
 import { DataAttributes } from '../../constants/dataAttributes';
+import { EXPLORER_SQL_OBJECT_CHANGED, ExplorerNodeType, FolderName } from '../../constants/explorer';
+import type { ExplorerNode, SqlScriptTarget } from '../../types/explorer';
 import { ExplorerHeader } from './ExplorerHeader';
-import { ExplorerTree } from './ExplorerTree';
+import { ExplorerTree, type ExplorerTreeHandle } from './ExplorerTree';
 import { ExplorerDialogs } from './ExplorerDialogs';
+import { ExportDataDialog } from './ExportDataDialog';
+import type { ExportDataParams } from './ExportDataDialog';
+import { BatchExportDialog } from './BatchExportDialog';
+import type { BatchExportParams } from './BatchExportDialog';
+import { BatchImportDialog } from './BatchImportDialog';
+import type { BatchImportParams } from './BatchImportDialog';
+import { ImportDataDialog } from './ImportDataDialog';
+import type { ImportDataParams } from './ImportDataDialog';
+import { SchemaDdlGeneratorDialog } from './SchemaDdlGeneratorDialog';
+import { SchemaCompareDialog } from './SchemaCompareDialog';
+import { RunSqlScriptDialog } from './RunSqlScriptDialog';
+import { GroupNameDialog } from './GroupNameDialog';
+import { RuleGroupDialog } from './RuleGroupDialog';
+import { useTableGroupStore, tableGroupScopeKey, type TableGroupRule } from '../../store/tableGroupStore';
+
+/** Stable fallback so the rule dialog is not reset on every parent re-render. */
+const EMPTY_GROUP_RULE: TableGroupRule = { type: 'exact', tableNames: [] };
 
 export function DatabaseExplorer() {
-  const { supportedDbTypes, openTab } = useWorkspaceStore();
+  const { t } = useTranslation();
+  const toast = useToast();
+  const { supportedDbTypes, supportedDbTypesLoading, openTab, fetchSupportedDbTypes } = useWorkspaceStore();
+  const accessToken = useAuthStore((state) => state.accessToken);
   const {
     connections,
     treeDataState,
@@ -21,6 +50,7 @@ export function DatabaseExplorer() {
     hydrateNodeFromCache,
     loadNodeData,
     refreshNodeById,
+    rebuildTablesFolder,
     handleDisconnect,
     isConnectionsLoading,
     refetchConnections,
@@ -28,6 +58,28 @@ export function DatabaseExplorer() {
   } = useConnectionTree();
 
   const [searchTerm, setSearchTerm] = useState('');
+  const treeRef = useRef<ExplorerTreeHandle>(null);
+
+  const handleLocateTable = useCallback(async () => {
+    const { tabs, activeTabId } = useTabStore.getState();
+    const tab = tabs.find((item) => item.id === activeTabId);
+    const metadata = tab?.type === 'table' ? tab.metadata as TableTabMetadata | undefined : undefined;
+    const catalog = metadata?.catalog || metadata?.databaseName;
+    if (!metadata?.connectionId || !catalog || !metadata.objectName) {
+      toast.warning(t(I18N_KEYS.EXPLORER.LOCATE_TABLE_NONE));
+      return;
+    }
+    const found = await treeRef.current?.locateTable({
+      connectionId: metadata.connectionId,
+      catalog,
+      schema: metadata.schema || metadata.schemaName,
+      objectName: metadata.objectName,
+      objectType: metadata.objectType,
+    });
+    if (!found) {
+      toast.warning(t(I18N_KEYS.EXPLORER.LOCATE_TABLE_MISSING));
+    }
+  }, [t, toast]);
 
   // Dialog state management
   const dialogState = useDialogState();
@@ -64,6 +116,8 @@ export function DatabaseExplorer() {
     setSelectedCreateTableNode,
     renameState,
     setRenameState,
+    commentState,
+    setCommentState,
   } = dialogState;
 
   // Connection actions
@@ -75,7 +129,7 @@ export function DatabaseExplorer() {
   });
 
   // Data view actions
-  const { handleViewDdl, handleViewData, handleTableOrViewDoubleClick, handleOpenQueryConsole, handleCreateTable, getDdlConfig } = useDataViewActions({
+  const { handleViewDdl, handleGenerateIndexes, handleGenerateSql, handleViewData, handleTableOrViewDoubleClick, handleOpenQueryConsole, handleCreateTable, handleOpenErDiagram, getDdlConfig, resolveConsoleContext } = useDataViewActions({
     setSelectedDdlNode,
     setDdlDialogOpen,
     setTableDataDialogOpen,
@@ -100,13 +154,335 @@ export function DatabaseExplorer() {
     setRenameState,
     renameState,
     setTreeDataState,
+    rebuildTablesFolder,
+  });
+
+  // Table comment actions
+  const { handleTableComment, confirmTableComment } = useTableCommentActions({
+    commentState,
+    setCommentState,
+    setTreeDataState,
   });
 
   const ddlConfig = getDdlConfig();
 
+  // Export data dialog
+  const [exportDialogOpen, setExportDialogOpen] = useState(false);
+  const [exportTargetPath, setExportTargetPath] = useState('');
+  const [exportParams, setExportParams] = useState<ExportDataParams | null>(null);
+  const handleExportData = (node: ExplorerNode) => {
+    const conn = node.dbConnection ?? connections.find((c) => String(c.id) === node.connectionId);
+    const catalog = node.catalog ?? conn?.database ?? '';
+    const tableName = node.objectName || node.name;
+    setExportTargetPath(`@${conn?.host ?? ''}/${catalog}/${tableName}`);
+    setExportParams({
+      connectionId: Number(node.connectionId),
+      tableName,
+      catalog: catalog || undefined,
+      schema: node.schema || undefined,
+    });
+    setExportDialogOpen(true);
+  };
+
+  // Batch export wizard (right-click the tables folder)
+  const [batchExportOpen, setBatchExportOpen] = useState(false);
+  const [batchExportTargetPath, setBatchExportTargetPath] = useState('');
+  const [batchExportParams, setBatchExportParams] = useState<BatchExportParams | null>(null);
+  const handleExportTablesWizard = (node: ExplorerNode) => {
+    const conn = node.dbConnection ?? connections.find((c) => String(c.id) === node.connectionId);
+    const catalog = node.catalog ?? conn?.database ?? '';
+    setBatchExportTargetPath(`@${conn?.host ?? ''}/${catalog}`);
+    setBatchExportParams({
+      connectionId: Number(node.connectionId),
+      catalog: catalog || undefined,
+      schema: node.schema || undefined,
+    });
+    setBatchExportOpen(true);
+  };
+
+  // Batch import wizard (right-click the tables folder)
+  const [batchImportOpen, setBatchImportOpen] = useState(false);
+  const [batchImportParams, setBatchImportParams] = useState<BatchImportParams | null>(null);
+  const [batchImportTargetNodeId, setBatchImportTargetNodeId] = useState<string | null>(null);
+  const handleImportTablesWizard = (node: ExplorerNode) => {
+    const conn = node.dbConnection ?? connections.find((c) => String(c.id) === node.connectionId);
+    const catalog = node.catalog ?? conn?.database ?? '';
+    setBatchImportParams({
+      connectionId: Number(node.connectionId),
+      catalog: catalog || undefined,
+      schema: node.schema || undefined,
+    });
+    setBatchImportTargetNodeId(node.id ?? null);
+    setBatchImportOpen(true);
+  };
+
+  // Import data dialog
+  const [importDialogOpen, setImportDialogOpen] = useState(false);
+  const [importTargetPath, setImportTargetPath] = useState('');
+  const [importParams, setImportParams] = useState<ImportDataParams | null>(null);
+  const handleImportData = (node: ExplorerNode) => {
+    const conn = node.dbConnection ?? connections.find((c) => String(c.id) === node.connectionId);
+    const catalog = node.catalog ?? conn?.database ?? '';
+    const tableName = node.objectName || node.name;
+    setImportTargetPath(`@${conn?.host ?? ''}/${catalog}/${tableName}`);
+    setImportParams({
+      connectionId: Number(node.connectionId),
+      tableName,
+      catalog: catalog || undefined,
+      schema: node.schema || undefined,
+    });
+    setImportDialogOpen(true);
+  };
+
+  // SQL script (right-click a database/schema node): run a .sql file, or generate DDL.
+  const [sqlGeneratorOpen, setSqlGeneratorOpen] = useState(false);
+  const [runSqlScriptOpen, setRunSqlScriptOpen] = useState(false);
+  const [sqlScriptTarget, setSqlScriptTarget] = useState<SqlScriptTarget | null>(null);
+
+  const buildSqlScriptTarget = (node: ExplorerNode): SqlScriptTarget | null => {
+    const context = resolveConsoleContext(node);
+    if (!context) return null;
+    const conn = node.dbConnection ?? connections.find((c) => c.id === context.connectionId);
+    const targetPath = [`@${conn?.host ?? ''}`, context.databaseName, context.schemaName]
+      .filter(Boolean).join('/');
+    const scope =
+      node.type === ExplorerNodeType.FOLDER && node.folderName === FolderName.TABLES ? 'tables'
+      : node.type === ExplorerNodeType.FOLDER && node.folderName === FolderName.VIEWS ? 'views'
+      : node.type === ExplorerNodeType.FOLDER && node.folderName === FolderName.ROUTINES ? 'routines'
+      : 'all';
+    return {
+      connectionId: context.connectionId,
+      connectionName: context.connectionName,
+      databaseName: context.databaseName,
+      schemaName: context.schemaName,
+      dbType: context.dbType,
+      targetPath,
+      scope,
+    };
+  };
+
+  const handleSqlGenerator = (node: ExplorerNode) => {
+    // Index nodes and the "indexes" folder have no backend DDL endpoint, so build
+    // CREATE INDEX statements client-side from index metadata.
+    if (node.type === ExplorerNodeType.INDEX
+      || (node.type === ExplorerNodeType.FOLDER && node.folderName === FolderName.INDEXES)) {
+      void handleGenerateIndexes(node);
+      return;
+    }
+    // Database/schema/folder nodes open the multi-object DDL generator dialog.
+    const target = buildSqlScriptTarget(node);
+    if (!target) return;
+    setSqlScriptTarget(target);
+    setSqlGeneratorOpen(true);
+  };
+
+  const handleRunSqlScript = (node: ExplorerNode) => {
+    const target = buildSqlScriptTarget(node);
+    if (!target) return;
+    setSqlScriptTarget(target);
+    setRunSqlScriptOpen(true);
+  };
+
+  // Schema compare dialog (read-only structure diff): right-click a DB/schema node.
+  const [schemaCompareOpen, setSchemaCompareOpen] = useState(false);
+  const [schemaCompareDefaults, setSchemaCompareDefaults] = useState<{
+    connectionId?: number;
+    catalog?: string | null;
+    schema?: string | null;
+  }>({});
+  const handleSchemaCompare = (node: ExplorerNode) => {
+    const conn = node.dbConnection ?? connections.find((c) => String(c.id) === node.connectionId);
+    // DB nodes carry the database name in `name` (no catalog field), schema nodes carry both.
+    const catalog = node.catalog ?? (node.type === ExplorerNodeType.DB ? node.name : conn?.database) ?? '';
+    setSchemaCompareDefaults({
+      connectionId: Number(node.connectionId),
+      catalog: catalog || null,
+      schema: node.schema || null,
+    });
+    setSchemaCompareOpen(true);
+  };
+
+  // ---- Table groups ----
+  const [groupNameDialogOpen, setGroupNameDialogOpen] = useState(false);
+  const [groupNameMode, setGroupNameMode] = useState<'create' | 'rename'>('create');
+  const [groupTargetNode, setGroupTargetNode] = useState<ExplorerNode | null>(null);
+  const [ruleGroupDialogOpen, setRuleGroupDialogOpen] = useState(false);
+  const [ruleGroupMode, setRuleGroupMode] = useState<'create' | 'edit'>('create');
+  const [ruleGroupNode, setRuleGroupNode] = useState<ExplorerNode | null>(null);
+
+  const scopeOf = (node: ExplorerNode) =>
+    tableGroupScopeKey(node.connectionId ?? '', node.catalog, node.schema);
+
+  const rebuildScope = (node: ExplorerNode) =>
+    rebuildTablesFolder(node.connectionId ?? '', node.catalog, node.schema);
+
+  const hasDuplicateGroupName = (scope: string, name: string, excludeGroupId?: string) =>
+    (useTableGroupStore.getState().groupsByScope[scope] ?? []).some(
+      (g) => g.name === name && g.id !== excludeGroupId
+    );
+
+  const handleCreateGroup = (node: ExplorerNode) => {
+    setGroupTargetNode(node);
+    setGroupNameMode('create');
+    setGroupNameDialogOpen(true);
+  };
+
+  const handleRenameGroup = (node: ExplorerNode) => {
+    setGroupTargetNode(node);
+    setGroupNameMode('rename');
+    setGroupNameDialogOpen(true);
+  };
+
+  const handleCreateRuleGroup = (node: ExplorerNode) => {
+    setRuleGroupNode(node);
+    setRuleGroupMode('create');
+    setRuleGroupDialogOpen(true);
+  };
+
+  const handleEditGroupRule = (node: ExplorerNode) => {
+    setRuleGroupNode(node);
+    setRuleGroupMode('edit');
+    setRuleGroupDialogOpen(true);
+  };
+
+  const confirmGroupName = (name: string) => {
+    const node = groupTargetNode;
+    if (!node) return;
+    const scope = scopeOf(node);
+    if (hasDuplicateGroupName(scope, name, groupNameMode === 'rename' ? node.groupId : undefined)) {
+      toast.error(t(I18N_KEYS.EXPLORER.GROUP_DUPLICATE_NAME));
+      return;
+    }
+    const store = useTableGroupStore.getState();
+    if (groupNameMode === 'create') {
+      store.createGroup(scope, name, { type: 'exact', tableNames: [] });
+      toast.success(t(I18N_KEYS.EXPLORER.GROUP_CREATED));
+    } else if (node.groupId) {
+      store.renameGroup(scope, node.groupId, name);
+      toast.success(t(I18N_KEYS.EXPLORER.GROUP_RENAMED));
+    }
+    rebuildScope(node);
+    setGroupNameDialogOpen(false);
+  };
+
+  const confirmRuleGroup = (name: string, rule: TableGroupRule) => {
+    const node = ruleGroupNode;
+    if (!node) return;
+    const scope = scopeOf(node);
+    if (hasDuplicateGroupName(scope, name, ruleGroupMode === 'edit' ? node.groupId : undefined)) {
+      toast.error(t(I18N_KEYS.EXPLORER.GROUP_DUPLICATE_NAME));
+      return;
+    }
+    const store = useTableGroupStore.getState();
+    if (ruleGroupMode === 'create') {
+      store.createGroup(scope, name, rule);
+      toast.success(t(I18N_KEYS.EXPLORER.GROUP_CREATED));
+    } else if (node.groupId) {
+      store.renameGroup(scope, node.groupId, name);
+      store.updateGroupRule(scope, node.groupId, rule);
+    }
+    rebuildScope(node);
+    setRuleGroupDialogOpen(false);
+  };
+
+  const handleDeleteGroup = (node: ExplorerNode) => {
+    if (!node.groupId) return;
+    useTableGroupStore.getState().deleteGroup(scopeOf(node), node.groupId);
+    toast.success(t(I18N_KEYS.EXPLORER.GROUP_DELETED));
+    rebuildScope(node);
+  };
+
+  const handleClearGroup = (node: ExplorerNode) => {
+    if (!node.groupId) return;
+    useTableGroupStore.getState().updateGroupRule(scopeOf(node), node.groupId, {
+      type: 'exact',
+      tableNames: [],
+    });
+    rebuildScope(node);
+  };
+
+  const handleMoveTableToGroup = (node: ExplorerNode, groupId: string) => {
+    useTableGroupStore.getState().addTableToGroup(scopeOf(node), groupId, node.name);
+    rebuildScope(node);
+  };
+
+  const handleRemoveTableFromGroup = (node: ExplorerNode, groupId: string) => {
+    useTableGroupStore.getState().removeTableFromGroup(scopeOf(node), groupId, node.name);
+    rebuildScope(node);
+  };
+
+  const handleMoveTables = (target: ExplorerNode, tables: ExplorerNode[]) => {
+    const store = useTableGroupStore.getState();
+    const scope = scopeOf(target);
+    // Only move tables that live in the target's own scope; a same-named table in
+    // another database must never be added to / removed from this scope's group.
+    const moved = tables.filter((table) => scopeOf(table) === scope);
+    if (moved.length === 0) return;
+    if (target.type === ExplorerNodeType.GROUP && target.groupId && target.groupKind === 'manual') {
+      for (const table of moved) store.addTableToGroup(scope, target.groupId, table.name);
+    } else if (target.type === ExplorerNodeType.FOLDER && target.folderName === FolderName.TABLES) {
+      for (const table of moved) {
+        if (table.groupId && table.groupKind === 'manual') {
+          store.removeTableFromGroup(scope, table.groupId, table.name);
+        }
+      }
+    }
+    rebuildScope(target);
+  };
+
   useEffect(() => {
-    useWorkspaceStore.getState().fetchSupportedDbTypes();
-  }, []);
+    if (!accessToken) return;
+    fetchSupportedDbTypes();
+  }, [accessToken, fetchSupportedDbTypes]);
+
+  useEffect(() => {
+    const onSqlObjectChanged = (event: Event) => {
+      const detail = (event as CustomEvent<{
+        connectionId: number;
+        catalog?: string | null;
+        schema?: string | null;
+        objectType: string | null;
+      }>).detail;
+      const folderByType: Record<string, FolderName> = {
+        TABLE: FolderName.TABLES,
+        VIEW: FolderName.VIEWS,
+        FUNCTION: FolderName.ROUTINES,
+        PROCEDURE: FolderName.ROUTINES,
+        TRIGGER: FolderName.TRIGGERS,
+        SEQUENCE: FolderName.SEQUENCES,
+        CONSTRAINT: FolderName.CONSTRAINTS,
+      };
+      const folderName = detail.objectType ? folderByType[detail.objectType] : undefined;
+      const nodes: ExplorerNode[] = [];
+      const collect = (items: ExplorerNode[]) => {
+        for (const item of items) {
+          nodes.push(item);
+          if (item.children) collect(item.children);
+        }
+      };
+      collect(treeDataState);
+      const matchingScope = (node: ExplorerNode) =>
+        node.connectionId === String(detail.connectionId)
+        && (node.catalog ?? '') === (detail.catalog ?? '');
+      const folder = nodes.find(node =>
+        node.type === ExplorerNodeType.FOLDER && node.folderName === folderName
+        && matchingScope(node) && (node.schema ?? '') === (detail.schema ?? ''));
+      const schema = nodes.find(node =>
+        node.type === ExplorerNodeType.SCHEMA && matchingScope(node)
+        && node.name === detail.schema);
+      // DB nodes store the database name in `name` (catalog is undefined for
+      // them), so match by name as a last-resort scope — needed for MySQL,
+      // which has no schema nodes.
+      const db = nodes.find(node =>
+        node.type === ExplorerNodeType.DB
+        && node.connectionId === String(detail.connectionId)
+        && node.name === detail.catalog);
+      const target = folder ?? schema ?? db;
+      if (target) void refreshNodeById(target.id);
+    };
+    window.addEventListener(EXPLORER_SQL_OBJECT_CHANGED, onSqlObjectChanged);
+    return () => window.removeEventListener(EXPLORER_SQL_OBJECT_CHANGED, onSqlObjectChanged);
+  }, [treeDataState, refreshNodeById]);
 
   return (
     <div
@@ -120,7 +496,12 @@ export function DatabaseExplorer() {
         isLoading={isConnectionsLoading}
         onRefresh={refetchConnections}
         supportedDbTypes={supportedDbTypes}
+        isDbTypesLoading={supportedDbTypesLoading}
+        onRetryDbTypes={() => { void fetchSupportedDbTypes(); }}
         onAddDatabase={openCreateModal}
+        onCollapseDatabases={() => treeRef.current?.collapseDatabases()}
+        onExpandDatabases={() => { void treeRef.current?.expandDatabases(); }}
+        onLocateTable={() => { void handleLocateTable(); }}
         onManageDriver={(dbType) => {
           setSelectedDriverDbType(dbType);
           setDriverModalOpen(true);
@@ -129,6 +510,7 @@ export function DatabaseExplorer() {
 
       <div className="flex-1 min-h-0 px-2 pb-2 overflow-hidden">
         <ExplorerTree
+          ref={treeRef}
           data={treeDataState}
           searchTerm={searchTerm}
           isLoading={isConnectionsLoading}
@@ -141,10 +523,29 @@ export function DatabaseExplorer() {
           onViewDdl={handleViewDdl}
           onViewData={handleViewData}
           onTableOrViewDoubleClick={handleTableOrViewDoubleClick}
+          onTableComment={handleTableComment}
           onRename={handleRename}
           onDelete={handleDelete}
           onOpenQueryConsole={handleOpenQueryConsole}
+          onRunSqlScript={handleRunSqlScript}
+          onSqlGenerator={handleSqlGenerator}
+          onGenerateSql={handleGenerateSql}
           onCreateTable={handleCreateTable}
+          onImportData={handleImportData}
+          onExportData={handleExportData}
+          onExportTablesWizard={handleExportTablesWizard}
+          onImportTablesWizard={handleImportTablesWizard}
+          onOpenErDiagram={handleOpenErDiagram}
+          onSchemaCompare={handleSchemaCompare}
+          onCreateGroup={handleCreateGroup}
+          onCreateRuleGroup={handleCreateRuleGroup}
+          onRenameGroup={handleRenameGroup}
+          onDeleteGroup={handleDeleteGroup}
+          onClearGroup={handleClearGroup}
+          onEditGroupRule={handleEditGroupRule}
+          onMoveTableToGroup={handleMoveTableToGroup}
+          onRemoveTableFromGroup={handleRemoveTableFromGroup}
+          onMoveTables={handleMoveTables}
         />
       </div>
 
@@ -177,6 +578,9 @@ export function DatabaseExplorer() {
         renameState={renameState}
         onRenameStateChange={setRenameState}
         onConfirmRename={confirmRename}
+        commentState={commentState}
+        onCommentStateChange={setCommentState}
+        onConfirmTableComment={confirmTableComment}
         createTableDialogOpen={createTableDialogOpen}
         onCreateTableDialogOpenChange={setCreateTableDialogOpen}
         setSelectedCreateTableNode={setSelectedCreateTableNode}
@@ -187,6 +591,86 @@ export function DatabaseExplorer() {
         }}
         onConnectionSuccess={refetchConnections}
       />
+
+      <ExportDataDialog
+        open={exportDialogOpen}
+        onOpenChange={setExportDialogOpen}
+        targetTablePath={exportTargetPath}
+        exportParams={exportParams}
+      />
+
+      <BatchExportDialog
+        open={batchExportOpen}
+        onOpenChange={setBatchExportOpen}
+        targetPath={batchExportTargetPath}
+        exportParams={batchExportParams}
+      />
+
+      <BatchImportDialog
+        open={batchImportOpen}
+        onOpenChange={setBatchImportOpen}
+        importParams={batchImportParams}
+        onSuccess={() => {
+          if (batchImportTargetNodeId) refreshNodeById(batchImportTargetNodeId);
+        }}
+      />
+
+      <ImportDataDialog
+        open={importDialogOpen}
+        onOpenChange={setImportDialogOpen}
+        targetTablePath={importTargetPath}
+        importParams={importParams}
+      />
+
+      <SchemaDdlGeneratorDialog
+        open={sqlGeneratorOpen}
+        onOpenChange={setSqlGeneratorOpen}
+        target={sqlScriptTarget}
+      />
+
+      <SchemaCompareDialog
+        open={schemaCompareOpen}
+        onOpenChange={setSchemaCompareOpen}
+        connections={connections}
+        defaultConnectionId={schemaCompareDefaults.connectionId}
+        defaultCatalog={schemaCompareDefaults.catalog}
+        defaultSchema={schemaCompareDefaults.schema}
+      />
+
+      <RunSqlScriptDialog
+        open={runSqlScriptOpen}
+        onOpenChange={setRunSqlScriptOpen}
+        target={sqlScriptTarget}
+      />
+
+      <GroupNameDialog
+        open={groupNameDialogOpen}
+        onOpenChange={(open) => {
+          setGroupNameDialogOpen(open);
+          if (!open) setGroupTargetNode(null);
+        }}
+        title={groupNameMode === 'create' ? t(I18N_KEYS.EXPLORER.NEW_GROUP) : t(I18N_KEYS.EXPLORER.RENAME_GROUP)}
+        initialName={groupNameMode === 'rename' ? (groupTargetNode?.name ?? '') : ''}
+        onConfirm={confirmGroupName}
+      />
+
+      {ruleGroupNode && (
+        <RuleGroupDialog
+          open={ruleGroupDialogOpen}
+          onOpenChange={(open) => {
+            setRuleGroupDialogOpen(open);
+            if (!open) setRuleGroupNode(null);
+          }}
+          title={ruleGroupMode === 'create' ? t(I18N_KEYS.EXPLORER.NEW_RULE_GROUP) : t(I18N_KEYS.EXPLORER.EDIT_GROUP_RULE)}
+          initialName={ruleGroupMode === 'edit' ? (ruleGroupNode.name ?? '') : ''}
+          initialRule={
+            ruleGroupMode === 'edit' && ruleGroupNode.groupId
+              ? (useTableGroupStore.getState().groupsByScope[scopeOf(ruleGroupNode)]?.find((g) => g.id === ruleGroupNode.groupId)?.rule ?? EMPTY_GROUP_RULE)
+              : EMPTY_GROUP_RULE
+          }
+          onConfirm={confirmRuleGroup}
+        />
+      )}
     </div>
   );
 }

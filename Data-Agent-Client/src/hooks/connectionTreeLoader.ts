@@ -4,6 +4,7 @@ import { viewService } from '../services/view.service';
 import { functionService } from '../services/function.service';
 import { procedureService } from '../services/procedure.service';
 import { triggerService } from '../services/trigger.service';
+import type { SequenceMetadata } from '../services/sequence.service';
 import {
   ExplorerNodeType,
   FolderName,
@@ -17,12 +18,15 @@ import type { FunctionMetadata } from '../services/function.service';
 import type { ProcedureMetadata } from '../services/procedure.service';
 import type { TriggerMetadata } from '../services/trigger.service';
 import { formatRoutineSignature, loadFolderContentsByType } from './folderContentLoaders';
+import { buildTablesFolderChildren } from '../lib/tableGrouping';
 import {
   fetchExplorerFunctions,
   fetchExplorerProcedures,
+  fetchExplorerTableComments,
   fetchExplorerTables,
   fetchExplorerTriggers,
   fetchExplorerViews,
+  type ExplorerTableComments,
 } from '../lib/explorerMetadataCache';
 
 export { formatRoutineSignature } from './folderContentLoaders';
@@ -32,6 +36,8 @@ const FOLDER_I18N: Record<FolderName, string> = {
   [FolderName.VIEWS]: ExplorerI18nKeys.FOLDER_VIEWS,
   [FolderName.ROUTINES]: ExplorerI18nKeys.FOLDER_ROUTINES,
   [FolderName.TRIGGERS]: ExplorerI18nKeys.FOLDER_TRIGGERS,
+  [FolderName.SEQUENCES]: ExplorerI18nKeys.FOLDER_SEQUENCES,
+  [FolderName.CONSTRAINTS]: ExplorerI18nKeys.FOLDER_CONSTRAINTS,
   [FolderName.COLUMNS]: ExplorerI18nKeys.FOLDER_COLUMNS,
   [FolderName.KEYS]: ExplorerI18nKeys.FOLDER_KEYS,
   [FolderName.INDEXES]: ExplorerI18nKeys.FOLDER_INDEXES,
@@ -79,7 +85,8 @@ export function createCachedObjectFolders(
   views: string[],
   functions: FunctionMetadata[] = [],
   procedures: ProcedureMetadata[] = [],
-  triggers: TriggerMetadata[] = []
+  triggers: TriggerMetadata[] = [],
+  sequences: SequenceMetadata[] = []
 ): ExplorerNode[] {
   const folders: ExplorerNode[] = [];
   if (tables.length > 0) {
@@ -91,7 +98,14 @@ export function createCachedObjectFolders(
         ctx.catalog,
         ctx.schema,
         ctx.t,
-        toTableNodes(ctx, tables)
+        buildTablesFolderChildren({
+          connectionId: ctx.connId,
+          catalog: ctx.catalog,
+          schema: ctx.schema,
+          folderId: folderId(ctx, FolderName.TABLES),
+          tableNames: tables,
+          tableComments: ctx.tableComments,
+        })
       )
     );
   }
@@ -134,6 +148,12 @@ export function createCachedObjectFolders(
       )
     );
   }
+  if (ctx.isDm) {
+    folders.push(createFolderWithChildren(
+      ctx.parentId, FolderName.SEQUENCES, ctx.connId, ctx.catalog, ctx.schema, ctx.t,
+      toSequenceNodes(ctx, sequences)
+    ));
+  }
   return folders;
 }
 
@@ -161,23 +181,12 @@ type DbSchemaContext = {
   t: (key: string) => string;
   queryClient?: QueryClient;
   force?: boolean;
+  isDm?: boolean;
+  tableComments?: ExplorerTableComments;
 };
 
 function folderId(ctx: DbSchemaContext, fn: FolderName) {
   return `${ctx.parentId}${ExplorerIdPrefix.FOLDER}${fn}`;
-}
-
-function toTableNodes(ctx: DbSchemaContext, names: string[]): ExplorerNode[] {
-  const prefix = folderId(ctx, FolderName.TABLES);
-  return names.map((name) => ({
-    id: `${prefix}${ExplorerIdPrefix.TABLE}${name}`,
-    name,
-    type: ExplorerNodeType.TABLE,
-    connectionId: ctx.connId,
-    catalog: ctx.catalog,
-    schema: ctx.schema,
-    children: [],
-  }));
 }
 
 function toViewNodes(ctx: DbSchemaContext, names: string[]): ExplorerNode[] {
@@ -234,12 +243,27 @@ function toTriggerNodes(ctx: DbSchemaContext, triggers: TriggerMetadata[]): Expl
   }));
 }
 
+function toSequenceNodes(ctx: DbSchemaContext, sequences: SequenceMetadata[]): ExplorerNode[] {
+  const prefix = folderId(ctx, FolderName.SEQUENCES);
+  return sequences.map((sequence) => ({
+    id: `${prefix}${ExplorerIdPrefix.SEQUENCE}${sequence.name}`,
+    name: sequence.name,
+    type: ExplorerNodeType.SEQUENCE,
+    connectionId: ctx.connId,
+    catalog: ctx.catalog,
+    schema: ctx.schema,
+  }));
+}
+
 /** Load all object folders for DB/Schema. Only returns non-empty folders. */
 export async function loadDbSchemaFolders(ctx: DbSchemaContext): Promise<ExplorerNode[]> {
-  const [tables, views, functions, procedures, triggers] = await Promise.all([
+  const [tables, tableComments, views, functions, procedures, triggers] = await Promise.all([
     ctx.queryClient
       ? fetchExplorerTables(ctx.queryClient, ctx.connId, ctx.catalog, ctx.schema, { force: ctx.force })
       : tableService.listTables(ctx.connId, ctx.catalog, ctx.schema),
+    ctx.queryClient
+      ? fetchExplorerTableComments(ctx.queryClient, ctx.connId, ctx.catalog, ctx.schema, { force: ctx.force })
+      : tableService.getTableComments(ctx.connId, ctx.catalog, ctx.schema),
     ctx.queryClient
       ? fetchExplorerViews(ctx.queryClient, ctx.connId, ctx.catalog, ctx.schema, { force: ctx.force })
       : viewService.listViews(ctx.connId, ctx.catalog, ctx.schema),
@@ -254,7 +278,14 @@ export async function loadDbSchemaFolders(ctx: DbSchemaContext): Promise<Explore
       : triggerService.listTriggers(ctx.connId, ctx.catalog, ctx.schema),
   ]);
 
-  return createCachedObjectFolders(ctx, tables, views, functions, procedures, triggers);
+  return createCachedObjectFolders(
+    { ...ctx, tableComments },
+    tables,
+    views,
+    functions,
+    procedures,
+    triggers
+  );
 }
 
 /** Load folder contents (lazy load when expanding a pre-created folder). */

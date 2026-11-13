@@ -1,6 +1,8 @@
-import { Play, Plus, Minus, FileText, ChevronDown, RefreshCcw } from 'lucide-react';
+import { Play, Plus, Minus, FileText, ChevronDown, ChevronUp, RefreshCcw, Search, X, ArrowUp, Wand2, Upload, Download } from 'lucide-react';
+import type { Ref } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Button } from '../ui/Button';
+import { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from '../ui/Tooltip';
 import { I18N_KEYS } from '../../constants/i18nKeys';
 import { TransactionModeSelector } from './TransactionModeSelector';
 import { TransactionMode, IsolationLevel } from '../../constants/transactionSettings';
@@ -10,13 +12,16 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '../ui/DropdownMenu';
+import { cn } from '../../lib/utils';
 
 interface TableDataToolbarProps {
   loading: boolean;
   isTable: boolean;
   viewMode: 'grid' | 'transpose';
   hasRowSelection: boolean;
-  deletePending: boolean;
+  hasPendingOps: boolean;
+  pendingCount: number;
+  submittingEdits: boolean;
   txMode: TransactionMode;
   isolationLevel: IsolationLevel;
   displayDbLabel: string;
@@ -25,13 +30,28 @@ interface TableDataToolbarProps {
   loadingDatabases: boolean;
   onRun: () => void;
   onRefresh: () => void;
+  onSubmit: () => void;
   onTransactionModeChange: (mode: TransactionMode) => void;
   onIsolationLevelChange: (level: IsolationLevel) => void;
   onAddRow: () => void;
   onDeleteRow: () => void;
   onOpenDdl: () => void;
+  onOpenSqlGenerator: () => void;
+  onImportData: () => void;
+  onExportData: () => void;
   onDatabaseChange: (db: string) => void;
   onViewModeChange: (mode: 'grid' | 'transpose') => void;
+  findVisible: boolean;
+  findDisabled: boolean;
+  searchTerm: string;
+  matchCount: number;
+  currentMatchIndex: number;
+  searchInputRef: Ref<HTMLInputElement>;
+  onToggleFind: () => void;
+  onSearchTermChange: (value: string) => void;
+  onFindNext: () => void;
+  onFindPrevious: () => void;
+  onCloseFind: () => void;
 }
 
 export function TableDataToolbar({
@@ -39,7 +59,9 @@ export function TableDataToolbar({
   isTable,
   viewMode,
   hasRowSelection,
-  deletePending,
+  hasPendingOps,
+  pendingCount,
+  submittingEdits,
   txMode,
   isolationLevel,
   displayDbLabel,
@@ -48,16 +70,33 @@ export function TableDataToolbar({
   loadingDatabases,
   onRun,
   onRefresh,
+  onSubmit,
   onTransactionModeChange,
   onIsolationLevelChange,
   onAddRow,
   onDeleteRow,
   onOpenDdl,
+  onOpenSqlGenerator,
+  onImportData,
+  onExportData,
   onDatabaseChange,
   onViewModeChange,
+  findVisible,
+  findDisabled,
+  searchTerm,
+  matchCount,
+  currentMatchIndex,
+  searchInputRef,
+  onToggleFind,
+  onSearchTermChange,
+  onFindNext,
+  onFindPrevious,
+  onCloseFind,
 }: TableDataToolbarProps) {
   const { t } = useTranslation();
   const isTransposeMode = viewMode === 'transpose';
+  const matchDisplay = matchCount > 0 ? `${currentMatchIndex + 1}/${matchCount}` : '0/0';
+  const noMatches = matchCount === 0;
 
   return (
     <div className="h-8 flex items-center px-2 theme-bg-main border-b theme-border text-[10px] theme-text-secondary shrink-0 gap-1">
@@ -87,6 +126,27 @@ export function TableDataToolbar({
         onTransactionModeChange={onTransactionModeChange}
         onIsolationLevelChange={onIsolationLevelChange}
       />
+      <button
+        type="button"
+        onClick={onSubmit}
+        disabled={!hasPendingOps || submittingEdits}
+        title={t(I18N_KEYS.EXPLORER.BATCH_SUBMIT_TITLE)}
+        className={cn(
+          'h-6 min-w-[24px] rounded px-1 inline-flex items-center justify-center gap-1 transition-colors',
+          hasPendingOps
+            ? 'bg-green-500 text-white hover:bg-green-600'
+            : 'bg-transparent text-gray-400 dark:text-gray-500',
+        )}
+      >
+        {submittingEdits ? (
+          <span className="h-3 w-3 rounded-full border-[1.5px] border-white border-t-transparent animate-spin" />
+        ) : (
+          <ArrowUp className="w-3.5 h-3.5" />
+        )}
+        {hasPendingOps && (
+          <span className="text-[10px] font-semibold leading-none tabular-nums">{pendingCount}</span>
+        )}
+      </button>
       <div className="w-px h-4 bg-border mx-0.5" />
       <Button
         variant="ghost"
@@ -104,9 +164,32 @@ export function TableDataToolbar({
         className="h-6 w-6"
         title={t(I18N_KEYS.EXPLORER.DELETE_ROW)}
         onClick={onDeleteRow}
-        disabled={!isTable || !hasRowSelection || deletePending || isTransposeMode}
+        disabled={!isTable || !hasRowSelection || isTransposeMode}
       >
         <Minus className="w-3.5 h-3.5 theme-text-secondary" />
+      </Button>
+      <div className="w-px h-4 bg-border mx-0.5" />
+      <Button
+        variant="ghost"
+        size="sm"
+        className="h-6 px-2 gap-1 text-[11px]"
+        title={t(I18N_KEYS.EXPLORER.IMPORT_DATA)}
+        onClick={onImportData}
+        disabled={!isTable}
+      >
+        <Upload className="w-3.5 h-3.5 theme-text-secondary" />
+        {t(I18N_KEYS.EXPLORER.IMPORT_DATA)}
+      </Button>
+      <Button
+        variant="ghost"
+        size="sm"
+        className="h-6 px-2 gap-1 text-[11px]"
+        title={t(I18N_KEYS.EXPLORER.EXPORT_DATA)}
+        onClick={onExportData}
+        disabled={!isTable}
+      >
+        <Download className="w-3.5 h-3.5 theme-text-secondary" />
+        {t(I18N_KEYS.EXPLORER.EXPORT_DATA)}
       </Button>
       <div className="w-px h-4 bg-border mx-0.5" />
       <Button
@@ -119,6 +202,103 @@ export function TableDataToolbar({
         <FileText className="w-3.5 h-3.5 theme-text-secondary" />
         DDL
       </Button>
+      <TooltipProvider>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <span className="inline-flex">
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-6 px-2 gap-1 text-[11px]"
+                onClick={onOpenSqlGenerator}
+                disabled={!hasRowSelection || isTransposeMode}
+              >
+                <Wand2 className="w-3.5 h-3.5 theme-text-secondary" />
+                {t(I18N_KEYS.EXPLORER.SQL_GENERATOR_DML)}
+              </Button>
+            </span>
+          </TooltipTrigger>
+          <TooltipContent side="bottom" className="max-w-xs text-xs">
+            {!hasRowSelection || isTransposeMode
+              ? t(I18N_KEYS.EXPLORER.SQL_GENERATOR_DML_DISABLED_HINT)
+              : t(I18N_KEYS.EXPLORER.SQL_GENERATOR_DML_HINT)}
+          </TooltipContent>
+        </Tooltip>
+      </TooltipProvider>
+      <div className="w-px h-4 bg-border mx-0.5" />
+      <Button
+        variant="ghost"
+        size="icon"
+        className="h-6 w-6"
+        title={t(I18N_KEYS.EXPLORER.FIND_TITLE)}
+        onClick={onToggleFind}
+        disabled={findDisabled}
+        data-active={findVisible ? 'true' : undefined}
+      >
+        <Search className="w-3.5 h-3.5 theme-text-secondary" />
+      </Button>
+      {findVisible && (
+        <div className="flex items-center gap-1">
+          <input
+            ref={searchInputRef}
+            type="text"
+            value={searchTerm}
+            onChange={(e) => onSearchTermChange(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault();
+                if (e.shiftKey) {
+                  onFindPrevious();
+                } else {
+                  onFindNext();
+                }
+              } else if (e.key === 'Escape') {
+                e.preventDefault();
+                onCloseFind();
+              }
+            }}
+            placeholder={t(I18N_KEYS.EXPLORER.FIND_PLACEHOLDER)}
+            className="h-6 w-40 rounded border border-gray-300 bg-white px-2 text-[11px] text-gray-900 outline-none placeholder:text-gray-400 focus:border-blue-500 dark:border-gray-600 dark:bg-gray-900 dark:text-gray-100 dark:placeholder:text-gray-500"
+          />
+          <span
+            className={cn(
+              'min-w-[38px] text-center text-[10px] tabular-nums',
+              noMatches && searchTerm.trim() ? 'text-red-500' : 'theme-text-secondary',
+            )}
+          >
+            {matchDisplay}
+          </span>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-6 w-6"
+            onClick={onFindPrevious}
+            disabled={noMatches}
+            title={t(I18N_KEYS.EXPLORER.FIND_PREVIOUS)}
+          >
+            <ChevronUp className="w-3.5 h-3.5 theme-text-secondary" />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-6 w-6"
+            onClick={onFindNext}
+            disabled={noMatches}
+            title={t(I18N_KEYS.EXPLORER.FIND_NEXT)}
+          >
+            <ChevronDown className="w-3.5 h-3.5 theme-text-secondary" />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-6 w-6"
+            onClick={onCloseFind}
+            title={t(I18N_KEYS.EXPLORER.FIND_CLOSE)}
+          >
+            <X className="w-3.5 h-3.5 theme-text-secondary" />
+          </Button>
+        </div>
+      )}
       <div className="w-px h-4 bg-border mx-0.5" />
       <DropdownMenu>
         <DropdownMenuTrigger asChild>

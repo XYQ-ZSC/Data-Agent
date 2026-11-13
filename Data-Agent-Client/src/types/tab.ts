@@ -5,6 +5,7 @@
  */
 export interface ConsoleTabMetadata {
   connectionId: number;
+  sqlBatchMode?: import('./sql').SqlBatchMode;
   dbType?: string;
   connectionName: string;   // e.g., "MySQL-Dev", "PostgreSQL-Prod"
   databaseName: string | null;
@@ -30,6 +31,11 @@ export interface TableTabMetadata extends ConsoleTabMetadata {
 }
 
 export type TableDataTabMetadata = TableTabMetadata;
+
+export interface ErDiagramTabMetadata extends ConsoleTabMetadata {
+  catalog?: string | null;
+  schema?: string | null;
+}
 
 /**
  * Plan Tab Metadata
